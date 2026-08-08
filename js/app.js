@@ -10,6 +10,20 @@
   const TRASH_DAYS = 30;
   const IMG_EXT = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg', 'avif', 'tif', 'tiff'];
 
+  /* ---------- 浏览器文件系统能力检测（用于相册管理降级） ---------- */
+  const fsCaps = (() => {
+    const DH = typeof FileSystemDirectoryHandle !== 'undefined' ? FileSystemDirectoryHandle.prototype : null;
+    const H = typeof FileSystemHandle !== 'undefined' ? FileSystemHandle.prototype : null;
+    const FH = typeof FileSystemFileHandle !== 'undefined' ? FileSystemFileHandle.prototype : null;
+    return {
+      createDir: !!(DH && (typeof DH.createDirectory === 'function' || typeof DH.getDirectoryHandle === 'function')),
+      removeEntry: !!(DH && typeof DH.removeEntry === 'function'),
+      move: !!(H && typeof H.move === 'function'),
+      writeFile: !!(FH && typeof FH.createWritable === 'function'),
+    };
+  })();
+  const fsTip = '当前浏览器不支持此操作，建议使用 Chrome 或 Edge（或 Firefox 131+）';
+
   /* ---------- 工具 ---------- */
   const $ = s => document.querySelector(s);
   const $$ = s => Array.from(document.querySelectorAll(s));
@@ -486,33 +500,69 @@
   }
   /* 创建 */
   async function doCreateAlbum(name) {
-    try { await state.root.createDirectory(name); }
-    catch (e) { toast('创建失败：' + e.message); return false; }
+    if (!fsCaps.createDir) { toast(fsTip); return false; }
+    try {
+      if (typeof state.root.createDirectory === 'function') {
+        await state.root.createDirectory(name);
+      } else {
+        await state.root.getDirectoryHandle(name, { create: true });
+      }
+    } catch (e) {
+      toast('创建失败：' + (e && e.message || e));
+      return false;
+    }
     await rescan();
     const a = state.albums.find(x => x.name === name);
     if (a) openAlbum(a);
     toast('已创建相册「' + name + '」');
     return true;
   }
-  /* 重命名 */
+  /* 重命名：move 优先，不支持时降级为「复制到新目录 + 删除旧目录」 */
   async function doRenameAlbum(oldName, newName) {
     const album = state.albums.find(a => a.name === oldName);
     if (!album || !album.handle) { toast('无法重命名（当前为兼容模式）'); return false; }
-    try { await album.handle.move(newName); }
-    catch (e) { toast('重命名失败：' + e.message); return false; }
+    try {
+      if (typeof album.handle.move === 'function') {
+        await album.handle.move(newName);
+      } else {
+        await fsCopyRename(album, newName);
+      }
+    } catch (e) {
+      toast('重命名失败：' + (e && e.message || e));
+      return false;
+    }
     await renameTrashAlbum(oldName, newName); // 同步最近删除中的相册名
     await rescan();
     toast('已重命名为「' + newName + '」');
     return true;
   }
-  /* 删除（真实删除磁盘文件夹及其内所有照片） */
+  /* 降级重命名：新建目标目录 → 逐张复制照片 → 删除旧目录 */
+  async function fsCopyRename(album, newName) {
+    if (!fsCaps.writeFile || !fsCaps.removeEntry) throw new Error(fsTip);
+    const dir = album.handle;
+    const newDir = typeof state.root.createDirectory === 'function'
+      ? await state.root.createDirectory(newName)
+      : await state.root.getDirectoryHandle(newName, { create: true });
+    for await (const [n, child] of dir.entries()) {
+      if (child.kind !== 'file') continue; // 深层子目录不复制（本项目约定最多两层）
+      const f = await child.getFile();
+      const dest = await newDir.getFileHandle(n, { create: true });
+      const w = await dest.createWritable();
+      await w.write(f);
+      await w.close();
+    }
+    await fsDeleteAlbum(album);
+  }
+  /* 删除（真实删除磁盘文件夹及其内所有照片）
+   * 用标准 removeEntry 实现，不依赖较新的 FileSystemHandle.remove() */
   async function deleteAlbum(album) {
     if (!album.handle) { toast('无法删除（当前为兼容模式）'); return; }
     if (!await canWrite()) { toast('需要「读写」权限才能删除相册'); return; }
+    if (!fsCaps.removeEntry) { toast(fsTip); return; }
     const msg = `确定删除相册「${album.name}」吗？\n\n将删除磁盘上该文件夹内的 ${album.photos.length} 张照片，且无法恢复！`;
     if (!confirm(msg)) return;
-    try { await removeDir(album.handle); }
-    catch (e) { toast('删除失败：' + e.message); return; }
+    try { await fsDeleteAlbum(album); }
+    catch (e) { toast('删除失败：' + (e && e.message || e)); return; }
     await removeTrashAlbum(album.name);
     toast('已删除相册「' + album.name + '」');
     if (state.album && state.album.name === album.name) {
@@ -521,12 +571,18 @@
     }
     await rescan();
   }
-  async function removeDir(h) {
-    for await (const [, child] of h.entries()) {
-      if (child.kind === 'directory') await removeDir(child);
-      else await child.remove();
+  /* 递归清空目录并用 removeEntry 删除相册目录本身 */
+  async function fsDeleteAlbum(album) {
+    const dir = album.handle;
+    if (typeof dir.removeEntry !== 'function') throw new Error(fsTip);
+    async function clear(h) {
+      for await (const [n, child] of h.entries()) {
+        if (child.kind === 'directory') await clear(child);
+        await h.removeEntry(n);
+      }
     }
-    await h.remove();
+    await clear(dir);
+    await state.root.removeEntry(album.name);
   }
   async function renameTrashAlbum(oldName, newName) {
     for (const t of await trashAll()) {
@@ -729,6 +785,7 @@
 
   /* 顶栏 */
   $('#btn-create').addEventListener('click', async () => {
+    if (!fsCaps.createDir) { toast(fsTip); return; }
     if (!await canWrite()) { toast('需要「读写」权限才能新建相册'); return; }
     openAlbumModal('create');
   });
@@ -798,6 +855,7 @@
   $('#sheet-rename').addEventListener('click', async () => {
     closeActionSheet();
     if (!sheetTarget) return;
+    if (!fsCaps.move && !(fsCaps.writeFile && fsCaps.removeEntry)) { toast(fsTip); return; }
     if (!await canWrite()) { toast('需要「读写」权限才能重命名相册'); return; }
     openAlbumModal('rename', sheetTarget);
   });

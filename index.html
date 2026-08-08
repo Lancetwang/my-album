@@ -4,28 +4,27 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light">
-<meta name="description" content="A dependency-free, local-first photo album browser for browsing images directly from your device.">
-<title>my-album · Offline Photo Browser</title>
+<title>my-album · 本地相册</title>
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
 
-<!-- ============ Landing page: choose a photo folder ============ -->
+<!-- ============ 首页：选择相册文件夹 ============ -->
 <section id="view-landing" class="view">
   <div class="landing-card">
-    <div class="landing-logo" aria-hidden="true">MA</div>
+    <div class="landing-logo">📷</div>
     <h1>my-album</h1>
-    <p class="landing-sub">Offline photo browser · Dependency-free · Local-first</p>
+    <p class="landing-sub">离线相册浏览器 · 零依赖 · 双击即用</p>
     <ol class="landing-steps">
-      <li>Place this project next to a folder containing your photos. Each immediate subfolder becomes an album.</li>
-      <li>Select the photo folder below.</li>
-      <li>You can also drag the folder onto this page.</li>
+      <li>把本项目与「<b>相册</b>」文件夹放在<b>同一目录</b>（相册文件夹下每个<b>子文件夹 = 一个相册</b>，照片放在子文件夹里，最多两层）</li>
+      <li>点击下方按钮，选择「相册」文件夹</li>
+      <li>也可以直接把「相册」文件夹<b>拖拽</b>到本页面</li>
     </ol>
     <div class="landing-actions">
-      <button id="btn-pick" class="btn-primary">Choose photo folder</button>
-      <button id="btn-pick-fallback" class="btn-secondary">Choose photo folder (compatibility mode)</button>
+      <button id="btn-pick" class="btn-primary">📁 选择相册文件夹</button>
+      <button id="btn-pick-fallback" class="btn-secondary">📂 选择相册文件夹（兼容模式）</button>
     </div>
-    <p class="landing-note">For security, browsers require an explicit folder selection before a local page can read files. Your browser may remember the permission for future visits. Chrome and Edge provide the most complete experience.</p>
+    <p class="landing-note">提示：受浏览器安全限制，纯静态页面无法自动扫描同级文件夹，首次打开需选择一次；之后浏览器会记住授权，多数情况可直接进入。推荐使用 Chrome 或 Edge。</p>
   </div>
   <input type="file" id="dir-input" webkitdirectory multiple hidden>
 </section>
@@ -76,14 +75,51 @@
 <!-- ============ 全屏查看器 ============ -->
 <div id="viewer" class="viewer hidden">
   <div class="viewer-top">
-    <span class="viewer-count" id="viewer-count"></span>
-    <span class="viewer-name" id="viewer-name"></span>
-    <button id="viewer-delete" class="icon-btn" title="移到最近删除 (Del)">🗑</button>
-    <button id="viewer-close" class="icon-btn" title="关闭 (Esc)">✕</button>
+    <div class="viewer-context">
+      <span class="viewer-count" id="viewer-count"></span>
+      <span class="viewer-name" id="viewer-name"></span>
+    </div>
+    <div class="viewer-actions">
+      <button id="viewer-delete" class="icon-btn" title="移到最近删除 (Del)">🗑</button>
+      <button id="viewer-close" class="icon-btn" title="关闭 (Esc)">✕</button>
+    </div>
   </div>
-  <div id="viewer-stage">
+  <div id="viewer-stage" class="viewer-stage">
     <img id="viewer-img" alt="" draggable="false">
   </div>
+  <aside class="viewer-details" aria-label="照片详情">
+    <div class="viewer-details-heading">
+      <span class="viewer-details-eyebrow">正在查看</span>
+      <h2>照片详情</h2>
+    </div>
+    <dl class="viewer-meta">
+      <div>
+        <dt>相册</dt>
+        <dd id="viewer-album">—</dd>
+      </div>
+      <div>
+        <dt>文件名</dt>
+        <dd id="viewer-file">—</dd>
+      </div>
+      <div>
+        <dt>文件时间</dt>
+        <dd id="viewer-date">—</dd>
+      </div>
+      <div>
+        <dt>尺寸</dt>
+        <dd id="viewer-dimensions">—</dd>
+      </div>
+      <div>
+        <dt>文件大小</dt>
+        <dd id="viewer-size">—</dd>
+      </div>
+      <div>
+        <dt>格式</dt>
+        <dd id="viewer-format">—</dd>
+      </div>
+    </dl>
+    <div class="viewer-details-hint">← → 切换照片<br>滚轮缩放 · 双击查看细节<br>Esc 关闭查看器</div>
+  </aside>
   <button id="viewer-prev" class="viewer-nav prev" title="上一张 (←)">‹</button>
   <button id="viewer-next" class="viewer-nav next" title="下一张 (→)">›</button>
 </div>

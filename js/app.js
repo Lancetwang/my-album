@@ -31,6 +31,19 @@
   const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const pad = n => String(n).padStart(2, '0');
   const fmtDate = ts => { const d = new Date(ts); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+  const fmtBytes = bytes => {
+    if (!Number.isFinite(bytes) || bytes < 0) return '—';
+    if (bytes < 1024) return `${bytes} B`;
+    const units = ['KB', 'MB', 'GB'];
+    let value = bytes / 1024, unit = 0;
+    while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++; }
+    return `${value.toFixed(value >= 10 ? 0 : 1)} ${units[unit]}`;
+  };
+  const fileFormat = file => {
+    const type = file && file.type ? file.type.split('/').pop().split('+')[0] : '';
+    const ext = file && file.name && file.name.includes('.') ? file.name.split('.').pop() : '';
+    return (type || ext || '未知').toUpperCase();
+  };
   const trashId = (album, name) => album + '\u0000' + name;
 
   /* ---------- 状态 ---------- */
@@ -399,8 +412,14 @@
     state.viewerUrl = urlOf(p.file);
     const img = $('#viewer-img');
     img.style.opacity = 0;
+    img.alt = p.name;
     img.src = state.viewerUrl;
-    img.onload = () => { img.style.opacity = 1; };
+    updateViewerDetails(p);
+    img.onload = () => {
+      if (state.viewerPhotos[state.viewerIndex] !== p) return;
+      img.style.opacity = 1;
+      updateViewerDetails(p, img.naturalWidth, img.naturalHeight);
+    };
     $('#viewer-count').textContent = `${state.viewerIndex + 1} / ${state.viewerPhotos.length}`;
     $('#viewer-name').textContent = p.name;
     resetZoom();
@@ -409,6 +428,15 @@
     if (!state.viewerPhotos.length) return;
     state.viewerIndex = (state.viewerIndex + d + state.viewerPhotos.length) % state.viewerPhotos.length;
     showViewerImage();
+  }
+
+  function updateViewerDetails(photo, width = 0, height = 0) {
+    $('#viewer-album').textContent = state.album ? state.album.name : '—';
+    $('#viewer-file').textContent = photo.name;
+    $('#viewer-date').textContent = fmtDate(photo.lastModified);
+    $('#viewer-dimensions').textContent = width && height ? `${width} × ${height}` : '读取中…';
+    $('#viewer-size').textContent = fmtBytes(photo.file.size);
+    $('#viewer-format').textContent = fileFormat(photo.file);
   }
 
   /* 缩放 / 平移 / 滑动 */
@@ -875,7 +903,7 @@
   (async function init() {
     if (!window.showDirectoryPicker) {
       $('#btn-pick').classList.add('hidden');
-      $('#btn-pick-fallback').textContent = 'Choose photo folder';
+      $('#btn-pick-fallback').textContent = '📂 选择相册文件夹';
     }
     try {
       await purgeTrash();

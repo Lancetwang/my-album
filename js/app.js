@@ -348,14 +348,18 @@
     if (focusTarget && focusTarget.isConnected && typeof focusTarget.focus === 'function') focusTarget.focus();
     if (resolve) resolve(result);
   }
-  function confirmInApp(message, title = '请确认', action = '确定') {
+  /* tone：'danger' 危险操作（红色按钮） / 'primary' 引导操作（绿色按钮） */
+  function confirmInApp(message, title = '请确认', action = '确定', eyebrow = '请确认', tone = 'danger') {
     if (confirmResolve) finishConfirm(false);
     return new Promise(resolve => {
       confirmResolve = resolve;
       confirmRestoreFocus = document.activeElement;
+      $('#confirm-eyebrow').textContent = eyebrow;
       $('#confirm-title').textContent = title;
       $('#confirm-message').textContent = message;
-      $('#confirm-ok').textContent = action;
+      const ok = $('#confirm-ok');
+      ok.textContent = action;
+      ok.className = tone === 'danger' ? 'btn-danger' : 'btn-primary';
       document.body.classList.add('modal-lock');
       $('#confirm-modal').classList.remove('hidden');
       $('#confirm-cancel').focus();
@@ -384,6 +388,11 @@
   }
 
   async function pickDir() {
+    // 系统文件夹选择器样式由浏览器决定、无法定制；先弹站内说明，让流程可预期
+    const go = await confirmInApp(
+      '接下来浏览器会打开系统自带的文件夹选择器，其样式由浏览器决定、无法定制。\n\n请选择「相册」文件夹；若浏览器询问权限，请点击「允许」，以便正常浏览和管理相册。',
+      '选择相册文件夹', '开始选择', '操作指引', 'primary');
+    if (!go) return;
     try {
       // 优先申请读写权限（相册增删改查需要）
       const h = await window.showDirectoryPicker({ mode: 'readwrite', id: 'album-root' });
@@ -705,14 +714,23 @@
     if (/[. ]$/.test(n)) return '相册名不能以空格或点结尾';
     return null;
   }
-  async function canWrite() {
+  async function queryWrite() {
     const h = state.root;
-    if (!h || !h.queryPermission) return false; // 无法获取读写授权
-    try {
-      let p = await h.queryPermission({ mode: 'readwrite' });
-      if (p !== 'granted') p = await h.requestPermission({ mode: 'readwrite' });
-      return p === 'granted';
-    } catch (e) { return false; }
+    if (!h || !h.queryPermission) return 'unsupported'; // 无法获取读写授权
+    try { return await h.queryPermission({ mode: 'readwrite' }); }
+    catch (e) { return 'unsupported'; }
+  }
+  /* 申请读写权限：先弹站内说明弹窗，再触发浏览器原生授权，避免系统弹窗无预兆出现 */
+  async function ensureWriteAccess(usage) {
+    const p = await queryWrite();
+    if (p === 'granted') return true;
+    if (p === 'unsupported') return false;
+    const go = await confirmInApp(
+      `${usage}需要「读写」权限。\n\n接下来浏览器会弹出系统授权窗口（样式由浏览器决定、无法定制），请点击「允许修改」。授权仅用于管理你的相册文件夹。`,
+      '需要读写权限', '去授权', '操作指引', 'primary');
+    if (!go) return false;
+    try { return (await state.root.requestPermission({ mode: 'readwrite' })) === 'granted'; }
+    catch (e) { return false; }
   }
   async function rescan() {
     showLoading('正在刷新…');
@@ -785,7 +803,7 @@
    * 用标准 removeEntry 实现，不依赖较新的 FileSystemHandle.remove() */
   async function deleteAlbum(album) {
     if (!album.handle) { toast('默认相册不支持删除'); return; }
-    if (!await canWrite()) { toast('需要「读写」权限才能删除相册'); return; }
+    if (!await ensureWriteAccess('删除相册')) { toast('需要「读写」权限才能删除相册'); return; }
     if (!fsCaps.removeEntry) { toast(fsTip); return; }
     const msg = `确定删除相册「${album.name}」吗？\n\n将删除磁盘上该文件夹内的 ${countLabel(album.photos.length)}，且无法恢复！`;
     if (!await confirmInApp(msg, '删除相册', '删除')) return;
@@ -987,12 +1005,18 @@
   /* ---------- 事件绑定 ---------- */
   /* 首页 */
   $('#btn-pick').addEventListener('click', async () => {
-    // 已有记住的句柄：先尝试直接复用
+    // 已有记住的句柄：先尝试直接复用；如需授权，先弹站内说明再触发系统提示
     const h = state.root || await kvGet('dirHandle');
     if (h && h.queryPermission) {
       try {
         let perm = await h.queryPermission({ mode: 'read' });
-        if (perm !== 'granted') perm = await h.requestPermission({ mode: 'read' });
+        if (perm !== 'granted') {
+          const go = await confirmInApp(
+            '已记住你上次选择的文件夹。\n\n接下来浏览器会弹出系统授权提示（样式由浏览器决定、无法定制），点击「允许」即可直接进入相册。',
+            '继续访问相册', '继续', '操作指引', 'primary');
+          if (!go) return;
+          perm = await h.requestPermission({ mode: 'read' });
+        }
         if (perm === 'granted') { await setRoot(h); return; }
       } catch (e) { /* 句柄失效则重新选择 */ }
     }
@@ -1017,7 +1041,7 @@
   /* 顶栏 */
   $('#btn-create').addEventListener('click', async () => {
     if (!fsCaps.createDir) { toast(fsTip); return; }
-    if (!await canWrite()) { toast('需要「读写」权限才能新建相册'); return; }
+    if (!await ensureWriteAccess('新建相册')) { toast('需要「读写」权限才能新建相册'); return; }
     openAlbumModal('create');
   });
   $('#btn-repick').addEventListener('click', pickDir);
@@ -1098,7 +1122,7 @@
     closeActionSheet();
     if (!target) return;
     if (!fsCaps.move && !(fsCaps.writeFile && fsCaps.removeEntry)) { toast(fsTip); return; }
-    if (!await canWrite()) { toast('需要「读写」权限才能重命名相册'); return; }
+    if (!await ensureWriteAccess('重命名相册')) { toast('需要「读写」权限才能重命名相册'); return; }
     openAlbumModal('rename', target);
   });
   $('#sheet-delete').addEventListener('click', () => {

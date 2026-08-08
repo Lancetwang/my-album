@@ -265,16 +265,19 @@
   /* ---------- 相册列表 ---------- */
   function renderAlbums() {
     releaseUrls();
-    const total = state.albums.reduce((n, a) => n + a.photos.length, 0);
+    const visibleCount = a => a.photos.filter(p => !trashIds.has(trashId(a.name, p.name))).length;
+    const total = state.albums.reduce((n, a) => n + visibleCount(a), 0);
     $('#albums-sub').textContent = `${state.albums.length} 个相册 · ${total} 张照片`;
     const grid = $('#album-grid');
     grid.innerHTML = '';
     state.albums.forEach(a => {
+      // 封面与计数同样过滤最近删除中的照片
+      const photos = a.photos.filter(p => !trashIds.has(trashId(a.name, p.name)));
       const card = document.createElement('div');
       card.className = 'album-card';
       const cover = document.createElement('div');
       cover.className = 'album-cover';
-      const cells = a.photos.slice(-4).reverse(); // 最新 4 张
+      const cells = photos.slice(-4).reverse(); // 最新 4 张（已过滤回收站）
       if (cells.length) {
         for (let i = 0; i < 4; i++) {
           const cell = document.createElement('div');
@@ -297,7 +300,7 @@
       name.title = a.name;
       const cnt = document.createElement('div');
       cnt.className = 'album-count';
-      cnt.textContent = `${a.photos.length} 张`;
+      cnt.textContent = `${photos.length} 张`;
       card.append(cover, name, cnt);
       const more = document.createElement('button');
       more.className = 'album-more';

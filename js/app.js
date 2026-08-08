@@ -356,7 +356,8 @@
           img.src = urlOf(p.file);
           img.alt = p.name;
           t.appendChild(img);
-          t.addEventListener('click', () => openViewer(photos, idx));
+          const i = idx; // 按值捕获，避免闭包拿到循环结束后的最终值
+          t.addEventListener('click', () => openViewer(photos, i));
           grid.appendChild(t);
           idx++;
         });
@@ -390,6 +391,7 @@
   }
   function showViewerImage() {
     const p = state.viewerPhotos[state.viewerIndex];
+    if (!p) { closeViewer(); return; }
     releaseViewerUrl();
     state.viewerUrl = urlOf(p.file);
     const img = $('#viewer-img');
@@ -853,15 +855,17 @@
   $('#sheet-cancel').addEventListener('click', closeActionSheet);
   $('#action-sheet').addEventListener('click', e => { if (e.target === e.currentTarget) closeActionSheet(); });
   $('#sheet-rename').addEventListener('click', async () => {
+    const target = sheetTarget; // 先保存，closeActionSheet 会清空它
     closeActionSheet();
-    if (!sheetTarget) return;
+    if (!target) return;
     if (!fsCaps.move && !(fsCaps.writeFile && fsCaps.removeEntry)) { toast(fsTip); return; }
     if (!await canWrite()) { toast('需要「读写」权限才能重命名相册'); return; }
-    openAlbumModal('rename', sheetTarget);
+    openAlbumModal('rename', target);
   });
   $('#sheet-delete').addEventListener('click', () => {
+    const target = sheetTarget; // 先保存，closeActionSheet 会清空它
     closeActionSheet();
-    if (sheetTarget) deleteAlbum(sheetTarget);
+    if (target) deleteAlbum(target);
   });
 
   /* ---------- 启动 ---------- */

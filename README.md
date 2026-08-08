@@ -1,69 +1,67 @@
-# 📷 my-album —— 本地相册浏览器
+# my-album
 
-纯静态、零依赖、**离线可用**的 Web 相册浏览器。把它和图片文件夹一起放到移动硬盘 / U 盘里，双击 `index.html` 即可像手机相册一样浏览照片。
+A lightweight, dependency-free photo album browser that runs entirely in the browser. Open it locally, choose a photo folder, and browse your collection without uploading images or running a backend.
 
-- ✅ 无需服务器、无需安装、无需联网
-- ✅ 纯 HTML + CSS + JavaScript 三件套，无任何构建步骤
-- ✅ 数据全部存在本地（IndexedDB），不上传任何内容
-- ✅ 推荐使用 **Chrome / Edge** 打开
+## Features
 
-## 目录结构
+- Local-first and private: images are read from the folder you select and stay on your device.
+- No build step, package manager, server, or external dependency.
+- Folder-based albums with support for root-level images through a default album.
+- Timeline view with grouping by day and ascending or descending sort order.
+- Full-screen viewer with keyboard navigation, touch swiping, zooming, and panning.
+- Recently Deleted for logical photo deletion, recovery, and automatic cleanup after 30 days.
+- Optional album creation, renaming, and deletion when read/write access is available.
+- IndexedDB persistence for the selected folder handle, sort preference, and Recently Deleted data.
 
+## Quick start
+
+1. Download or clone this repository.
+2. Create a folder for your photos. Each immediate subfolder becomes an album:
+
+   ```text
+   photos/
+   ├── Travel 2025/
+   │   ├── 001.jpg
+   │   └── 002.jpg
+   └── Family/
+       └── 001.png
+   ```
+
+3. Open `index.html` in a supported browser.
+4. Select the `photos` folder, or drag it onto the page.
+
+If the selected folder has no subfolders, its root-level images are shown as `Default Album`. When subfolders are present, only images inside those immediate subfolders are included; deeper directory levels are ignored.
+
+## Supported image formats
+
+The application recognizes JPG, JPEG, PNG, GIF, WebP, BMP, SVG, AVIF, TIF, and TIFF files. Actual decoding depends on the browser. HEIC files are not included and may need to be converted before use.
+
+## Browser compatibility
+
+The full experience works best in a Chromium-based browser with the File System Access API, such as current Chrome or Edge. This enables folder selection and, when permission is granted, album management.
+
+Browsers that support `webkitdirectory` can use the compatibility picker for browsing. Compatibility mode is read-only, and drag-and-drop support varies by browser.
+
+Because of browser security restrictions, the application must receive an explicit folder selection or drop action before it can read local files. It cannot automatically scan neighboring folders.
+
+## Data and deletion behavior
+
+- No image data is uploaded; the application has no backend or network service.
+- The browser stores the selected folder handle, preferences, and Recently Deleted thumbnails in local IndexedDB storage.
+- Moving a photo to Recently Deleted hides it in the application but does not remove the original file from disk. It can be restored or purged from the local Recently Deleted list.
+- Deleting an album is different: with read/write permission, it permanently removes that folder and its contents from disk after confirmation.
+
+## Development
+
+There is no build process. Edit the HTML, CSS, or JavaScript files directly and reload the page.
+
+For a local development server, use any static file server. Python's standard library is sufficient:
+
+```bash
+python -m http.server 8000
 ```
-my-album/
-├── index.html
-├── css/style.css
-├── js/app.js
-└── 相册/              ← 你自己创建的文件夹（与 index.html 同级）
-    ├── 2025-07 旅行/   ← 每个子文件夹 = 一个相册
-    │   ├── 001.jpg
-    │   └── ...
-    └── 日常/
-```
 
-- 层级最多两层：`相册/子文件夹/照片`，更深层级的文件会被忽略
-- 没有子文件夹时，「相册」根目录下的照片会显示为「**默认相册**」
-
-## 使用方法
-
-1. 把本项目的 `index.html`、`css/`、`js/` 放到硬盘任意目录（如 `D:\照片`）
-2. 在同一目录下创建「**相册**」文件夹，把照片按相册分好子文件夹
-3. 双击 `index.html`，点击「**选择相册文件夹**」，选择「相册」文件夹
-   - 也可以直接把「相册」文件夹**拖进页面**
-   - 浏览器会记住授权，下次打开通常可直接进入
-   - 若希望使用**新建/重命名/删除相册**功能，授权时请选择「读写」权限（浏览器会提示）；只读模式仍可完整浏览
-
-> ### 为什么不能自动识别同级文件夹？
->
-> 浏览器出于安全限制，网页**无法在无用户操作的情况下读取本地磁盘**。纯静态页面做不到"自动扫描"同级目录——这是所有纯前端方案（Notion 离线版、各类本地工具）的共同限制，与实现方式无关。一次点击 / 一次拖拽即可完成授权，之后的体验与手机相册一致。
-
-## 功能
-
-| 功能 | 说明 |
-| --- | --- |
-| 🗂 相册卡片 | 每个相册显示最新 4 张照片的拼贴缩略图 + 数量 |
-| ✏️ 相册管理 | 新建 / 重命名 / 删除相册（需授权读写；删除相册 = 删除磁盘上该文件夹内所有照片） |
-| 🕐 时间线 | 相册内按「天」分组，每组前有灰色日期标签；时间排序最新/最早一键切换 |
-| 🔍 全屏查看器 | 键盘 ← →、触屏滑动、滚轮缩放、双击缩放、拖拽平移、Del 删除 |
-| 🗑 最近删除 | 删除的照片保留 30 天，可随时恢复或彻底删除，到期自动清理 |
-| 💾 记忆授权 | 记住相册文件夹句柄与排序偏好，下次打开免选择（取决于浏览器） |
-| 🔒 安全设计 | 单张照片的"删除"只是从视图隐藏，不触碰磁盘文件；只有删除整个相册才会真实删除磁盘文件 |
-
-## 浏览器兼容
-
-| 浏览器 | 文件夹选择 | 相册管理（增删改） | 说明 |
-| --- | --- | --- | --- |
-| Chrome / Edge | ✅ | ✅（move 原生重命名） | 最佳体验 |
-| Firefox 131+ | ✅ | ✅（重命名为复制式降级） | 可正常增删、重命名 |
-| Firefox 130 | ✅ | ❌（只读支持） | 只能浏览，管理功能会提示 |
-| 其他浏览器 | ⚠️ | ❌ | 兼容模式（webkitdirectory）只能浏览 |
-
-## 常见问题
-
-- **HEIC 照片打不开？** Windows 版 Chrome/Edge 无法解码 HEIC，请先转成 JPG。
-- **换了硬盘 / 文件夹被移动了？** 点击右上角「📁」重新选择文件夹即可。
-- **彻底删除会删掉磁盘文件吗？** 单张照片的"彻底删除"只是移除「最近删除」记录，不触碰磁盘文件；**删除整个相册**才会真实删除磁盘上该文件夹及其内所有照片（操作前有明确警告）。
-- **照片太多会不会卡？** 缩略图按需懒加载，万张级照片可流畅浏览；全屏查看原图时会完整解码单张图片。
+Then open `http://localhost:8000/` in your browser.
 
 ## License
 

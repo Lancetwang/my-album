@@ -875,7 +875,7 @@
   (async function init() {
     if (!window.showDirectoryPicker) {
       $('#btn-pick').classList.add('hidden');
-      $('#btn-pick-fallback').textContent = '📂 选择相册文件夹';
+      $('#btn-pick-fallback').textContent = 'Choose photo folder';
     }
     try {
       await purgeTrash();

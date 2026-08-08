@@ -4,28 +4,28 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light">
-<title>my-album · 本地相册</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📷</text></svg>">
+<meta name="description" content="A dependency-free, local-first photo album browser for browsing images directly from your device.">
+<title>my-album · Offline Photo Browser</title>
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
 
-<!-- ============ 首页：选择相册文件夹 ============ -->
+<!-- ============ Landing page: choose a photo folder ============ -->
 <section id="view-landing" class="view">
   <div class="landing-card">
-    <div class="landing-logo">📷</div>
+    <div class="landing-logo" aria-hidden="true">MA</div>
     <h1>my-album</h1>
-    <p class="landing-sub">离线相册浏览器 · 零依赖 · 双击即用</p>
+    <p class="landing-sub">Offline photo browser · Dependency-free · Local-first</p>
     <ol class="landing-steps">
-      <li>把本项目与「<b>相册</b>」文件夹放在<b>同一目录</b>（相册文件夹下每个<b>子文件夹 = 一个相册</b>，照片放在子文件夹里，最多两层）</li>
-      <li>点击下方按钮，选择「相册」文件夹</li>
-      <li>也可以直接把「相册」文件夹<b>拖拽</b>到本页面</li>
+      <li>Place this project next to a folder containing your photos. Each immediate subfolder becomes an album.</li>
+      <li>Select the photo folder below.</li>
+      <li>You can also drag the folder onto this page.</li>
     </ol>
     <div class="landing-actions">
-      <button id="btn-pick" class="btn-primary">📁 选择相册文件夹</button>
-      <button id="btn-pick-fallback" class="btn-secondary">📂 选择相册文件夹（兼容模式）</button>
+      <button id="btn-pick" class="btn-primary">Choose photo folder</button>
+      <button id="btn-pick-fallback" class="btn-secondary">Choose photo folder (compatibility mode)</button>
     </div>
-    <p class="landing-note">提示：受浏览器安全限制，纯静态页面无法自动扫描同级文件夹，首次打开需选择一次；之后浏览器会记住授权，多数情况可直接进入。推荐使用 Chrome 或 Edge。</p>
+    <p class="landing-note">For security, browsers require an explicit folder selection before a local page can read files. Your browser may remember the permission for future visits. Chrome and Edge provide the most complete experience.</p>
   </div>
   <input type="file" id="dir-input" webkitdirectory multiple hidden>
 </section>

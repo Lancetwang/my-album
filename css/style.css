@@ -97,9 +97,9 @@ button:focus-visible, input:focus-visible {
   background: #e9e6dd;
 }
 .album-cover-empty { display: flex; align-items: center; justify-content: center; font-size: 30px; color: var(--text3); background: linear-gradient(135deg, #f1eee6, #e4e0d5); }
-.album-cell { overflow: hidden; }
-.album-cell img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform .7s cubic-bezier(.22, 1, .36, 1), filter .35s ease; }
-.album-card:hover .album-cell img { transform: scale(1.045); filter: saturate(1.04); }
+.album-cell { position: relative; overflow: hidden; }
+.album-cell img, .album-cell video { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform .7s cubic-bezier(.22, 1, .36, 1), filter .35s ease; }
+.album-card:hover .album-cell img, .album-card:hover .album-cell video { transform: scale(1.045); filter: saturate(1.04); }
 .album-name { font-size: 15px; font-weight: 650; margin: 13px 5px 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .album-count { font-size: 12px; color: var(--text2); margin: 0 5px 0; }
 .album-more {
@@ -126,12 +126,20 @@ button:focus-visible, input:focus-visible {
 .photo-tile {
   position: relative; aspect-ratio: 1; border-radius: 3px; overflow: hidden;
   padding: 0; background: #e9e6dd;
+  content-visibility: auto; contain-intrinsic-size: 118px 118px;
   transition: transform .35s cubic-bezier(.22, 1, .36, 1), box-shadow .35s ease, z-index 0s;
 }
 .photo-tile:hover { transform: translateY(-3px) scale(1.018); z-index: 2; box-shadow: 0 10px 24px rgb(28 28 25 / 18%); }
 .photo-tile:active { transform: scale(.97); }
-.photo-tile img { width: 100%; height: 100%; object-fit: cover; display: block; transition: filter .35s ease; }
-.photo-tile:hover img { filter: saturate(1.05) contrast(1.02); }
+.photo-tile img, .photo-tile video { width: 100%; height: 100%; object-fit: cover; display: block; transition: filter .35s ease; }
+.photo-tile:hover img, .photo-tile:hover video { filter: saturate(1.05) contrast(1.02); }
+.video-badge {
+  position: absolute; left: 7px; bottom: 7px; z-index: 1;
+  padding: 2px 6px; border: 1px solid rgb(255 255 255 / 22%); border-radius: 3px;
+  background: rgb(28 28 25 / 72%); color: #fff;
+  font-size: 10px; font-weight: 700; letter-spacing: .05em;
+  pointer-events: none; backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px);
+}
 /* 时间线分组标签 */
 .timeline-label {
   grid-column: 1 / -1;
@@ -182,12 +190,13 @@ button:focus-visible, input:focus-visible {
     linear-gradient(145deg, #1c1c19, #11110f);
 }
 .viewer-stage.dragging { cursor: grabbing; }
-#viewer-img {
+#viewer-img, #viewer-video {
   max-width: 100%; max-height: 100%; object-fit: contain;
   border-radius: 8px; opacity: 0; transition: opacity .22s ease;
   box-shadow: 0 22px 60px rgba(0, 0, 0, .35);
   will-change: transform;
 }
+#viewer-video { background: #050504; }
 .viewer-details {
   grid-column: 2; min-width: 0; min-height: 0; width: var(--viewer-panel);
   overflow: auto; padding: 108px 26px 28px;
@@ -266,7 +275,7 @@ button:focus-visible, input:focus-visible {
   box-shadow: 0 24px 70px rgb(28 28 25 / 20%);
   animation: fadeUp .35s cubic-bezier(.22, 1, .36, 1);
 }
-#modal-img { max-width: 100%; max-height: 46vh; border-radius: 3px; object-fit: contain; background: #efede6; }
+#modal-img, #modal-video { max-width: 100%; max-height: 46vh; border-radius: 3px; object-fit: contain; background: #efede6; }
 .modal-name { font-size: 15px; font-weight: 650; margin: 15px 0 2px; word-break: break-all; }
 .modal-meta { font-size: 12.5px; color: var(--text2); margin-top: 3px; line-height: 1.6; }
 .modal-actions { display: flex; gap: 10px; margin-top: 18px; }

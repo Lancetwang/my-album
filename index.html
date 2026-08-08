@@ -16,7 +16,7 @@
     <h1>my-album</h1>
     <p class="landing-sub">离线相册浏览器 · 零依赖 · 双击即用</p>
     <ol class="landing-steps">
-      <li>把本项目与「<b>相册</b>」文件夹放在<b>同一目录</b>（相册文件夹下每个<b>子文件夹 = 一个相册</b>，照片放在子文件夹里，最多两层）</li>
+      <li>把本项目与「<b>相册</b>」文件夹放在<b>同一目录</b>（相册文件夹下每个<b>子文件夹 = 一个相册</b>，照片或视频放在子文件夹里，最多两层）</li>
       <li>点击下方按钮，选择「相册」文件夹</li>
       <li>也可以直接把「相册」文件夹<b>拖拽</b>到本页面</li>
     </ol>
@@ -41,7 +41,7 @@
   <main id="album-grid" class="album-grid"></main>
 </section>
 
-<!-- ============ 相册内照片 ============ -->
+<!-- ============ 相册内媒体 ============ -->
 <section id="view-photos" class="view">
   <header class="topbar">
     <button id="btn-back-albums" class="icon-btn back-btn" title="返回">‹</button>
@@ -84,11 +84,12 @@
   </div>
   <div id="viewer-stage" class="viewer-stage">
     <img id="viewer-img" alt="" draggable="false">
+    <video id="viewer-video" class="hidden" controls playsinline preload="metadata" aria-label="视频预览"></video>
   </div>
-  <aside class="viewer-details" aria-label="照片详情">
+  <aside class="viewer-details" aria-label="媒体详情">
     <div class="viewer-details-heading">
       <span class="viewer-details-eyebrow">正在查看</span>
-      <h2>照片详情</h2>
+      <h2>媒体详情</h2>
     </div>
     <dl class="viewer-meta">
       <div>
@@ -116,7 +117,7 @@
         <dd id="viewer-format">—</dd>
       </div>
     </dl>
-    <div class="viewer-details-hint">← → 切换照片<br>滚轮缩放 · 双击查看细节<br>Esc 关闭查看器</div>
+    <div class="viewer-details-hint">← → 切换媒体<br>滚轮缩放 · 双击查看细节<br>Esc 关闭查看器</div>
   </aside>
   <button id="viewer-prev" class="viewer-nav prev" title="上一张 (←)">‹</button>
   <button id="viewer-next" class="viewer-nav next" title="下一张 (→)">›</button>
@@ -126,6 +127,7 @@
 <div id="trash-modal" class="modal hidden">
   <div class="modal-card">
     <img id="modal-img" alt="">
+    <video id="modal-video" class="hidden" controls playsinline preload="metadata" aria-label="视频预览"></video>
     <div class="modal-name" id="modal-name"></div>
     <div class="modal-meta" id="modal-info"></div>
     <div class="modal-actions">

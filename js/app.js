@@ -9,6 +9,7 @@
   const DAY = 86400000;
   const TRASH_DAYS = 30;
   const IMG_EXT = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg', 'avif', 'tif', 'tiff'];
+  const VIDEO_EXT = ['mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'avi', 'mkv', '3gp', 'mpeg', 'mpg'];
 
   /* ---------- 浏览器文件系统能力检测（用于相册管理降级） ---------- */
   const fsCaps = (() => {
@@ -27,7 +28,19 @@
   /* ---------- 工具 ---------- */
   const $ = s => document.querySelector(s);
   const $$ = s => Array.from(document.querySelectorAll(s));
-  const isImage = n => { const i = n.lastIndexOf('.'); return i > 0 && IMG_EXT.includes(n.slice(i + 1).toLowerCase()); };
+  const mediaKind = value => {
+    const name = typeof value === 'string' ? value : value && value.name || '';
+    const type = typeof value === 'string' ? '' : value && value.type || '';
+    if (type.startsWith('video/')) return 'video';
+    const i = name.lastIndexOf('.');
+    if (i <= 0) return '';
+    const ext = name.slice(i + 1).toLowerCase();
+    if (IMG_EXT.includes(ext)) return 'image';
+    if (VIDEO_EXT.includes(ext)) return 'video';
+    return '';
+  };
+  const isMedia = value => !!mediaKind(value);
+  const countLabel = n => `${n} 个媒体`;
   const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const pad = n => String(n).padStart(2, '0');
   const fmtDate = ts => { const d = new Date(ts); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
@@ -56,12 +69,13 @@
     viewerPhotos: [],    // 查看器当前照片列表（已按排序/回收站过滤）
     viewerIndex: 0,
     viewerUrl: null,
-    urls: new Set(),     // 待释放的 objectURL
+    urls: new Set(),     // 网格与最近删除缩略图的 objectURL
   };
   let trashIds = new Set(); // 已删除照片 id 集合
   let albumModalMode = 'create'; // create | rename
   let albumModalTarget = null;
   let sheetTarget = null;
+  let renderToken = 0;
 
   /* ---------- IndexedDB（失败时降级为内存，保证浏览与回收站可用） ---------- */
   let idbOk = true, _db = null;
@@ -115,12 +129,117 @@
   }
 
   /* ---------- objectURL 管理 ---------- */
+  let mediaObserver = null;
+  const lazyFiles = new WeakMap();
+  const lazyUrls = new WeakMap();
+  const lazyElements = new Set();
+  let modalUrl = null;
+
   function urlOf(file) { const u = URL.createObjectURL(file); state.urls.add(u); return u; }
-  function releaseUrls() { state.urls.forEach(u => URL.revokeObjectURL(u)); state.urls.clear(); }
-  function releaseViewerUrl() { if (state.viewerUrl) { URL.revokeObjectURL(state.viewerUrl); state.viewerUrl = null; } }
+  function loadLazyMedia(el) {
+    if (lazyUrls.has(el)) return;
+    const file = lazyFiles.get(el);
+    if (!file) return;
+    const url = urlOf(file);
+    lazyUrls.set(el, url);
+    el.src = url;
+    if (el.tagName === 'VIDEO') {
+      el.onloadedmetadata = () => {
+        if (el.readyState < 2) { try { el.currentTime = 0; } catch (e) { } }
+      };
+      el.load();
+    }
+  }
+  function unloadLazyMedia(el) {
+    const url = lazyUrls.get(el);
+    if (!url) return;
+    if (el.tagName === 'VIDEO') { el.onloadedmetadata = null; el.pause(); el.removeAttribute('src'); el.load(); }
+    else el.removeAttribute('src');
+    URL.revokeObjectURL(url);
+    state.urls.delete(url);
+    lazyUrls.delete(el);
+  }
+  function watchMedia(el, file) {
+    lazyFiles.set(el, file);
+    lazyElements.add(el);
+    if (!('IntersectionObserver' in window)) { loadLazyMedia(el); return; }
+    if (!mediaObserver) {
+      mediaObserver = new IntersectionObserver(entries => entries.forEach(entry => {
+        if (entry.isIntersecting) loadLazyMedia(entry.target);
+        else unloadLazyMedia(entry.target);
+      }), { rootMargin: '640px 0px' });
+    }
+    mediaObserver.observe(el);
+  }
+  function releaseUrls() {
+    if (mediaObserver) { mediaObserver.disconnect(); mediaObserver = null; }
+    lazyElements.forEach(unloadLazyMedia);
+    lazyElements.clear();
+    state.urls.forEach(u => URL.revokeObjectURL(u));
+    state.urls.clear();
+  }
+  function clearViewerMedia() {
+    const img = $('#viewer-img');
+    const video = $('#viewer-video');
+    if (!img || !video) return;
+    img.onload = null; img.onerror = null;
+    video.onloadedmetadata = null; video.onerror = null;
+    video.pause(); video.removeAttribute('src'); video.load();
+    img.removeAttribute('src');
+    img.classList.add('hidden');
+    video.classList.add('hidden');
+  }
+  function releaseViewerUrl() {
+    if (state.viewerUrl) { URL.revokeObjectURL(state.viewerUrl); state.viewerUrl = null; }
+    clearViewerMedia();
+  }
+  function releaseModalUrl() {
+    if (modalUrl) { URL.revokeObjectURL(modalUrl); modalUrl = null; }
+    const img = $('#modal-img');
+    const video = $('#modal-video');
+    if (!img || !video) return;
+    video.pause(); video.removeAttribute('src'); video.load();
+    img.removeAttribute('src');
+    img.classList.add('hidden');
+    video.classList.add('hidden');
+  }
 
   /* ---------- 生成缩略图（用于最近删除存储） ---------- */
+  function makeVideoThumb(file, size = 480) {
+    return new Promise(resolve => {
+      const video = document.createElement('video');
+      const url = URL.createObjectURL(file);
+      let done = false;
+      const timer = setTimeout(() => finish(file), 6000);
+      function finish(value) {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        URL.revokeObjectURL(url);
+        video.pause(); video.removeAttribute('src'); video.load();
+        resolve(value || file);
+      }
+      video.muted = true;
+      video.playsInline = true;
+      video.preload = 'metadata';
+      video.addEventListener('loadeddata', () => {
+        try {
+          const scale = Math.min(1, size / Math.max(video.videoWidth, video.videoHeight));
+          const w = Math.max(1, Math.round(video.videoWidth * scale));
+          const h = Math.max(1, Math.round(video.videoHeight * scale));
+          const canvas = document.createElement('canvas');
+          canvas.width = w; canvas.height = h;
+          canvas.getContext('2d').drawImage(video, 0, 0, w, h);
+          canvas.toBlob(blob => finish(blob || file), 'image/jpeg', 0.82);
+        } catch (e) { finish(file); }
+      }, { once: true });
+      video.addEventListener('error', () => finish(file), { once: true });
+      video.src = url;
+      video.load();
+    });
+  }
   async function makeThumb(file, size = 480) {
+    if (mediaKind(file) === 'video') return makeVideoThumb(file, size);
     try {
       const bmp = await createImageBitmap(file);
       const scale = Math.min(1, size / Math.max(bmp.width, bmp.height));
@@ -142,13 +261,13 @@
       if (handle.kind === 'directory') {
         const photos = [];
         for await (const [fn, fh] of handle.entries()) {
-          if (fh.kind === 'file' && isImage(fn)) {
-            try { const file = await fh.getFile(); photos.push({ name: fn, lastModified: file.lastModified, file }); } catch (e) { /* 跳过无法读取的文件 */ }
+          if (fh.kind === 'file' && isMedia(fn)) {
+            try { const file = await fh.getFile(); photos.push({ name: fn, kind: mediaKind(fn), lastModified: file.lastModified, file }); } catch (e) { /* 跳过无法读取的文件 */ }
           }
         }
         albums.push({ name, photos, handle });
-      } else if (handle.kind === 'file' && isImage(name)) {
-        try { const file = await handle.getFile(); rootPhotos.push({ name, lastModified: file.lastModified, file }); } catch (e) { }
+      } else if (handle.kind === 'file' && isMedia(name)) {
+        try { const file = await handle.getFile(); rootPhotos.push({ name, kind: mediaKind(name), lastModified: file.lastModified, file }); } catch (e) { }
       }
     }
     // 没有子相册时，根目录照片显示为「默认相册」
@@ -186,12 +305,23 @@
 
   /* ---------- 视图切换 ---------- */
   function switchView(name) {
+    if (state.view === 'albums' && name !== 'albums') {
+      $('#album-grid').replaceChildren();
+    }
+    if (state.view === 'photos' && name !== 'photos') {
+      renderToken++;
+      $('#photo-grid').replaceChildren();
+    }
+    if (state.view === 'trash' && name !== 'trash') {
+      releaseModalUrl();
+      $('#trash-grid').replaceChildren();
+    }
     state.view = name;
     $$('.view').forEach(v => v.classList.remove('active'));
     $('#view-' + name).classList.add('active');
     window.scrollTo(0, 0);
   }
-  function showLanding() { switchView('landing'); }
+  function showLanding() { renderToken++; releaseUrls(); releaseModalUrl(); switchView('landing'); }
 
   /* ---------- Toast / Loading ---------- */
   let toastTimer = null;
@@ -272,11 +402,35 @@
   }
 
   /* ---------- 相册列表 ---------- */
+  function createMediaElement(file, kind, alt = '') {
+    const el = document.createElement(kind === 'video' ? 'video' : 'img');
+    if (kind === 'video') {
+      el.muted = true;
+      el.playsInline = true;
+      el.preload = 'metadata';
+      el.setAttribute('aria-hidden', 'true');
+    } else {
+      el.loading = 'lazy';
+      el.decoding = 'async';
+      el.alt = alt;
+    }
+    return el;
+  }
+  function addVideoBadge(container, kind) {
+    if (kind !== 'video') return;
+    container.classList.add('is-video');
+    const badge = document.createElement('span');
+    badge.className = 'video-badge';
+    badge.textContent = '视频';
+    badge.setAttribute('aria-hidden', 'true');
+    container.appendChild(badge);
+  }
   function renderAlbums() {
+    renderToken++;
     releaseUrls();
     const visibleCount = a => a.photos.filter(p => !trashIds.has(trashId(a.name, p.name))).length;
     const total = state.albums.reduce((n, a) => n + visibleCount(a), 0);
-    $('#albums-sub').textContent = `${state.albums.length} 个相册 · ${total} 张照片`;
+    $('#albums-sub').textContent = `${state.albums.length} 个相册 · ${countLabel(total)}`;
     const grid = $('#album-grid');
     grid.innerHTML = '';
     state.albums.forEach(a => {
@@ -292,12 +446,14 @@
           const cell = document.createElement('div');
           cell.className = 'album-cell';
           if (cells[i]) {
-            const img = document.createElement('img');
-            img.loading = 'lazy'; img.decoding = 'async'; img.alt = '';
-            img.src = urlOf(cells[i].file);
-            cell.appendChild(img);
+            const kind = cells[i].kind || mediaKind(cells[i].file);
+            const media = createMediaElement(cells[i].file, kind);
+            cell.appendChild(media);
+            addVideoBadge(cell, kind);
+            cover.appendChild(cell);
+            watchMedia(media, cells[i].file);
           }
-          cover.appendChild(cell);
+          if (!cell.isConnected) cover.appendChild(cell);
         }
       } else {
         cover.classList.add('album-cover-empty');
@@ -309,7 +465,7 @@
       name.title = a.name;
       const cnt = document.createElement('div');
       cnt.className = 'album-count';
-      cnt.textContent = `${photos.length} 张`;
+      cnt.textContent = countLabel(photos.length);
       card.append(cover, name, cnt);
       const more = document.createElement('button');
       more.className = 'album-more';
@@ -324,7 +480,7 @@
       grid.innerHTML = `<div class="empty">
         <div class="empty-icon">🖼️</div>
         <div class="empty-title">「相册」文件夹还是空的</div>
-        <div class="empty-sub">在「相册」文件夹下新建子文件夹作为相册，并把照片放进去；<br>或直接把照片放在「相册」文件夹里，会显示为「默认相册」</div>
+        <div class="empty-sub">在「相册」文件夹下新建子文件夹作为相册，并把照片或视频放进去；<br>或直接把媒体放在「相册」文件夹里，会显示为「默认相册」</div>
       </div>`;
     }
   }
@@ -341,44 +497,62 @@
     switchView('photos');
   }
   function renderPhotos() {
+    const token = ++renderToken;
     releaseUrls();
     const photos = visiblePhotos();
     $('#photo-title').textContent = state.album.name;
     $('#photo-title').title = state.album.name;
-    $('#photo-sub').textContent = `${photos.length} 张`;
+    $('#photo-sub').textContent = countLabel(photos.length);
     updateSegmented();
     const grid = $('#photo-grid');
     grid.innerHTML = '';
     if (photos.length) {
-      // 时间线：按天分组，每组前插入灰色日期标签
+      // 时间线：按天分组，每组前插入灰色日期标签；分批挂载，避免大相册阻塞主线程
       const groups = groupPhotos(photos);
-      let idx = 0;
-      groups.forEach(g => {
-        const label = document.createElement('div');
-        label.className = 'timeline-label';
-        label.textContent = fmtDayLabel(g.ts);
-        grid.appendChild(label);
-        g.photos.forEach(p => {
-          const t = document.createElement('button');
-          t.className = 'photo-tile';
-          t.type = 'button';
-          t.title = `${p.name}\n${fmtDate(p.lastModified)}`;
-          const img = document.createElement('img');
-          img.loading = 'lazy'; img.decoding = 'async';
-          img.src = urlOf(p.file);
-          img.alt = p.name;
-          t.appendChild(img);
-          const i = idx; // 按值捕获，避免闭包拿到循环结束后的最终值
-          t.addEventListener('click', () => openViewer(photos, i));
-          grid.appendChild(t);
-          idx++;
-        });
-      });
+      let groupIndex = 0, photoIndex = 0, idx = 0;
+      const appendBatch = () => {
+        if (token !== renderToken) return;
+        const fragment = document.createDocumentFragment();
+        const pending = [];
+        let added = 0;
+        while (groupIndex < groups.length && added < 120) {
+          const group = groups[groupIndex];
+          if (photoIndex === 0) {
+            const label = document.createElement('div');
+            label.className = 'timeline-label';
+            label.textContent = fmtDayLabel(group.ts);
+            fragment.appendChild(label);
+            added++;
+          }
+          while (photoIndex < group.photos.length && added < 120) {
+            const p = group.photos[photoIndex++];
+            const t = document.createElement('button');
+            t.className = 'photo-tile';
+            t.type = 'button';
+            t.title = `${p.name}\n${fmtDate(p.lastModified)}`;
+            const kind = p.kind || mediaKind(p.file);
+            const media = createMediaElement(p.file, kind, p.name);
+            t.setAttribute('aria-label', p.name);
+            t.appendChild(media);
+            addVideoBadge(t, kind);
+            const i = idx++; // 按值捕获，避免闭包拿到循环结束后的最终值
+            t.addEventListener('click', () => openViewer(photos, i));
+            fragment.appendChild(t);
+            pending.push([media, p.file]);
+            added++;
+          }
+          if (photoIndex >= group.photos.length) { groupIndex++; photoIndex = 0; }
+        }
+        grid.appendChild(fragment);
+        pending.forEach(([media, file]) => watchMedia(media, file));
+        if (groupIndex < groups.length) requestAnimationFrame(appendBatch);
+      };
+      appendBatch();
     } else {
       grid.innerHTML = `<div class="empty">
         <div class="empty-icon">🖼️</div>
-        <div class="empty-title">此相册暂无照片</div>
-        <div class="empty-sub">把照片放到「相册」文件夹下的「${esc(state.album.name)}」子文件夹里</div>
+        <div class="empty-title">此相册暂无媒体</div>
+        <div class="empty-sub">把照片或视频放到「相册」文件夹下的「${esc(state.album.name)}」子文件夹里</div>
       </div>`;
     }
   }
@@ -401,21 +575,44 @@
     releaseViewerUrl();
     resetZoom();
   }
+  function viewerMedia() {
+    return $('#viewer-video').classList.contains('hidden') ? $('#viewer-img') : $('#viewer-video');
+  }
   function showViewerImage() {
     const p = state.viewerPhotos[state.viewerIndex];
     if (!p) { closeViewer(); return; }
     releaseViewerUrl();
-    state.viewerUrl = urlOf(p.file);
+    state.viewerUrl = URL.createObjectURL(p.file);
+    const kind = p.kind || mediaKind(p.file);
     const img = $('#viewer-img');
-    img.style.opacity = 0;
-    img.alt = p.name;
-    img.src = state.viewerUrl;
+    const video = $('#viewer-video');
+    const media = kind === 'video' ? video : img;
+    media.classList.remove('hidden');
+    media.style.opacity = 0;
+    if (kind === 'video') {
+      video.src = state.viewerUrl;
+      video.onloadedmetadata = () => {
+        if (state.viewerPhotos[state.viewerIndex] !== p) return;
+        video.style.opacity = 1;
+        updateViewerDetails(p, video.videoWidth, video.videoHeight);
+      };
+      video.onerror = () => {
+        if (state.viewerPhotos[state.viewerIndex] === p) {
+          video.style.opacity = 1;
+          toast('当前浏览器无法播放此视频');
+        }
+      };
+      video.load();
+    } else {
+      img.alt = p.name;
+      img.src = state.viewerUrl;
+      img.onload = () => {
+        if (state.viewerPhotos[state.viewerIndex] !== p) return;
+        img.style.opacity = 1;
+        updateViewerDetails(p, img.naturalWidth, img.naturalHeight);
+      };
+    }
     updateViewerDetails(p);
-    img.onload = () => {
-      if (state.viewerPhotos[state.viewerIndex] !== p) return;
-      img.style.opacity = 1;
-      updateViewerDetails(p, img.naturalWidth, img.naturalHeight);
-    };
     $('#viewer-count').textContent = `${state.viewerIndex + 1} / ${state.viewerPhotos.length}`;
     $('#viewer-name').textContent = p.name;
     resetZoom();
@@ -438,9 +635,9 @@
   /* 缩放 / 平移 / 滑动 */
   let z = { scale: 1, tx: 0, ty: 0, ox: 50, oy: 50 };
   function applyZoom() {
-    const img = $('#viewer-img');
-    img.style.transform = `translate(${z.tx}px, ${z.ty}px) scale(${z.scale})`;
-    img.style.transformOrigin = `${z.ox}% ${z.oy}%`;
+    const media = viewerMedia();
+    media.style.transform = `translate(${z.tx}px, ${z.ty}px) scale(${z.scale})`;
+    media.style.transformOrigin = `${z.ox}% ${z.oy}%`;
   }
   function resetZoom() { z = { scale: 1, tx: 0, ty: 0, ox: 50, oy: 50 }; applyZoom(); }
 
@@ -457,6 +654,7 @@
 
   let drag = null, moved = 0;
   stage.addEventListener('pointerdown', e => {
+    if (e.target.closest && e.target.closest('video')) return;
     drag = { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, id: e.pointerId, type: e.pointerType };
     moved = 0;
     try { stage.setPointerCapture(e.pointerId); } catch (err) { }
@@ -468,10 +666,10 @@
     if (z.scale > 1) {
       z.tx += dx; z.ty += dy;
       stage.classList.add('dragging');
-      const img = $('#viewer-img');
-      img.style.transition = 'none';
+      const media = viewerMedia();
+      media.style.transition = 'none';
       applyZoom();
-      img.style.transition = '';
+      media.style.transition = '';
     }
     drag.x = e.clientX; drag.y = e.clientY;
   });
@@ -486,6 +684,7 @@
   });
   stage.addEventListener('click', e => {
     if (moved > 8) return; // 拖动/滑动后不触发
+    if (e.target.closest && e.target.closest('video')) return;
     $('#viewer').classList.toggle('chrome-hidden');
   });
   stage.addEventListener('dblclick', e => {
@@ -588,7 +787,7 @@
     if (!album.handle) { toast('默认相册不支持删除'); return; }
     if (!await canWrite()) { toast('需要「读写」权限才能删除相册'); return; }
     if (!fsCaps.removeEntry) { toast(fsTip); return; }
-    const msg = `确定删除相册「${album.name}」吗？\n\n将删除磁盘上该文件夹内的 ${album.photos.length} 张照片，且无法恢复！`;
+    const msg = `确定删除相册「${album.name}」吗？\n\n将删除磁盘上该文件夹内的 ${countLabel(album.photos.length)}，且无法恢复！`;
     if (!await confirmInApp(msg, '删除相册', '删除')) return;
     try { await fsDeleteAlbum(album); }
     catch (e) { toast('删除失败：' + (e && e.message || e)); return; }
@@ -694,7 +893,7 @@
     showLoading('正在处理…');
     try {
       const thumb = await makeThumb(p.file);
-      await trashAdd({ id, album: state.album.name, name: p.name, deletedAt: Date.now(), lastModified: p.lastModified, thumb });
+      await trashAdd({ id, album: state.album.name, name: p.name, kind: p.kind || mediaKind(p.file), deletedAt: Date.now(), lastModified: p.lastModified, thumb });
       trashIds.add(id);
     } finally { hideLoading(); }
     toast('已移到「最近删除」，30 天后自动清除');
@@ -711,11 +910,13 @@
   function daysLeft(t) { return Math.max(0, Math.ceil((t.deletedAt + TRASH_DAYS * DAY - Date.now()) / DAY)); }
 
   async function renderTrash() {
+    renderToken++;
+    releaseUrls();
     await purgeTrash();
     const items = (await trashAll()).sort((a, b) => b.deletedAt - a.deletedAt);
     $('#trash-sub').textContent = items.length
-      ? `${items.length} 张 · ${TRASH_DAYS} 天后自动清除`
-      : '暂无已删除的照片';
+      ? `${countLabel(items.length)} · ${TRASH_DAYS} 天后自动清除`
+      : '暂无已删除的媒体';
     const grid = $('#trash-grid');
     grid.innerHTML = '';
     items.forEach(t => {
@@ -723,10 +924,11 @@
       tile.className = 'photo-tile';
       tile.type = 'button';
       tile.title = t.name;
-      const img = document.createElement('img');
-      img.alt = t.name;
-      img.src = URL.createObjectURL(t.thumb);
-      tile.appendChild(img);
+      const kind = t.thumb && t.thumb.type && t.thumb.type.startsWith('video/') ? 'video' : 'image';
+      const media = createMediaElement(t.thumb, kind, t.name);
+      tile.setAttribute('aria-label', t.name);
+      tile.appendChild(media);
+      addVideoBadge(tile, kind);
       const days = daysLeft(t);
       const badge = document.createElement('span');
       badge.className = 'trash-days';
@@ -734,12 +936,13 @@
       tile.appendChild(badge);
       tile.addEventListener('click', () => openTrashModal(t));
       grid.appendChild(tile);
+      watchMedia(media, t.thumb);
     });
     if (!items.length) {
       grid.innerHTML = `<div class="empty">
         <div class="empty-icon">🗑️</div>
         <div class="empty-title">最近删除是空的</div>
-        <div class="empty-sub">删除的照片会在这里保留 ${TRASH_DAYS} 天，可随时恢复</div>
+        <div class="empty-sub">删除的照片或视频会在这里保留 ${TRASH_DAYS} 天，可随时恢复</div>
       </div>`;
     }
   }
@@ -747,8 +950,14 @@
   /* 回收站详情弹窗 */
   let modalItem = null;
   function openTrashModal(t) {
+    releaseModalUrl();
     modalItem = t;
-    $('#modal-img').src = URL.createObjectURL(t.thumb);
+    modalUrl = URL.createObjectURL(t.thumb);
+    const kind = t.thumb && t.thumb.type && t.thumb.type.startsWith('video/') ? 'video' : 'image';
+    const img = $('#modal-img');
+    const video = $('#modal-video');
+    if (kind === 'video') { video.classList.remove('hidden'); video.src = modalUrl; video.load(); }
+    else { img.classList.remove('hidden'); img.src = modalUrl; }
     $('#modal-name').textContent = t.name;
     const days = daysLeft(t);
     $('#modal-info').innerHTML =
@@ -756,7 +965,7 @@
       `<div>删除于 ${fmtDate(t.deletedAt)}${days ? ` · 剩余 ${days} 天` : ' · 即将自动清除'}</div>`;
     $('#trash-modal').classList.remove('hidden');
   }
-  function closeTrashModal() { $('#trash-modal').classList.add('hidden'); modalItem = null; }
+  function closeTrashModal() { $('#trash-modal').classList.add('hidden'); releaseModalUrl(); modalItem = null; }
   async function restoreModalItem() {
     if (!modalItem) return;
     await trashRemove(modalItem.id);
@@ -868,7 +1077,7 @@
   $('#modal-close').addEventListener('click', closeTrashModal);
   $('#modal-restore').addEventListener('click', restoreModalItem);
   $('#modal-purge').addEventListener('click', async () => {
-    if (modalItem && await confirmInApp('彻底删除「' + modalItem.name + '」？此操作无法撤销。', '彻底删除照片', '彻底删除')) await purgeModalItem();
+    if (modalItem && await confirmInApp('彻底删除「' + modalItem.name + '」？此操作无法撤销。', '彻底删除媒体', '彻底删除')) await purgeModalItem();
   });
   $('#trash-modal').addEventListener('click', e => { if (e.target === e.currentTarget) closeTrashModal(); });
 

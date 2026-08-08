@@ -16,10 +16,10 @@ A lightweight, dependency-free photo album browser that runs entirely in the bro
 ## Quick start
 
 1. Download or clone this repository.
-2. Create a folder for your photos. Each immediate subfolder becomes an album:
+2. Create a `相册` folder next to this project. Each immediate subfolder becomes an album:
 
    ```text
-   photos/
+   相册/
    ├── Travel 2025/
    │   ├── 001.jpg
    │   └── 002.jpg
@@ -28,7 +28,7 @@ A lightweight, dependency-free photo album browser that runs entirely in the bro
    ```
 
 3. Open `index.html` in a supported browser.
-4. Select the `photos` folder, or drag it onto the page.
+4. Select the `相册` folder, or drag it onto the page.
 
 If the selected folder has no subfolders, its root-level images are shown as `Default Album`. When subfolders are present, only images inside those immediate subfolders are included; deeper directory levels are ignored.
 
@@ -39,8 +39,6 @@ The application recognizes JPG, JPEG, PNG, GIF, WebP, BMP, SVG, AVIF, TIF, and T
 ## Browser compatibility
 
 The full experience works best in a Chromium-based browser with the File System Access API, such as current Chrome or Edge. This enables folder selection and, when permission is granted, album management.
-
-Browsers that support `webkitdirectory` can use the compatibility picker for browsing. Compatibility mode is read-only, and drag-and-drop support varies by browser.
 
 Because of browser security restrictions, the application must receive an explicit folder selection or drop action before it can read local files. It cannot automatically scan neighboring folders.
 

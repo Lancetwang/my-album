@@ -63,7 +63,7 @@
   let albumModalTarget = null;
   let sheetTarget = null;
 
-  /* ---------- IndexedDB（失败时降级为内存，保证兼容模式可用） ---------- */
+  /* ---------- IndexedDB（失败时降级为内存，保证浏览与回收站可用） ---------- */
   let idbOk = true, _db = null;
   const memKV = new Map();
   const memTrash = new Map();
@@ -160,37 +160,6 @@
     return albums;
   }
 
-  /* ---------- 兼容模式：由 webkitdirectory 选中的文件构造伪根句柄 ---------- */
-  function pseudoRootFromFiles(files) {
-    const map = new Map(); // 子相册名 -> 照片数组
-    const rootPhotos = [];
-    for (const f of files) {
-      if (!isImage(f.name)) continue;
-      const parts = (f.webkitRelativePath || f.name).split('/');
-      const rel = parts.slice(1);
-      if (rel.length <= 1) {
-        rootPhotos.push({ name: rel[0] || f.name, lastModified: f.lastModified, file: f });
-      } else if (rel.length === 2) {
-        const arr = map.get(rel[0]) || [];
-        arr.push({ name: rel[1], lastModified: f.lastModified, file: f });
-        map.set(rel[0], arr);
-      } // 超过两层：忽略
-    }
-    return {
-      kind: 'directory', name: 'root',
-      entries: async function* () {
-        for (const [name, photos] of map) {
-          yield [name, {
-            kind: 'directory', name,
-            entries: async function* () {
-              for (const p of photos) yield [p.name, { kind: 'file', name: p.name, getFile: async () => p.file }];
-            }
-          }];
-        }
-        for (const p of rootPhotos) yield [p.name, { kind: 'file', name: p.name, getFile: async () => p.file }];
-      }
-    };
-  }
   /* 拖拽 fallback：webkitGetAsEntry 遍历 */
   function entryToHandle(entry) {
     return new Promise((resolve, reject) => {
@@ -235,6 +204,33 @@
   }
   function showLoading(msg) { $('#loading-msg').textContent = msg || '正在扫描相册…'; $('#loading').classList.remove('hidden'); }
   function hideLoading() { $('#loading').classList.add('hidden'); }
+
+  /* ---------- 站内确认弹窗 ---------- */
+  let confirmResolve = null;
+  let confirmRestoreFocus = null;
+  function finishConfirm(result) {
+    $('#confirm-modal').classList.add('hidden');
+    document.body.classList.remove('modal-lock');
+    const resolve = confirmResolve;
+    confirmResolve = null;
+    const focusTarget = confirmRestoreFocus;
+    confirmRestoreFocus = null;
+    if (focusTarget && focusTarget.isConnected && typeof focusTarget.focus === 'function') focusTarget.focus();
+    if (resolve) resolve(result);
+  }
+  function confirmInApp(message, title = '请确认', action = '确定') {
+    if (confirmResolve) finishConfirm(false);
+    return new Promise(resolve => {
+      confirmResolve = resolve;
+      confirmRestoreFocus = document.activeElement;
+      $('#confirm-title').textContent = title;
+      $('#confirm-message').textContent = message;
+      $('#confirm-ok').textContent = action;
+      document.body.classList.add('modal-lock');
+      $('#confirm-modal').classList.remove('hidden');
+      $('#confirm-cancel').focus();
+    });
+  }
 
   /* ---------- 根目录设置与扫描 ---------- */
   async function setRoot(h) {
@@ -512,7 +508,7 @@
   }
   async function canWrite() {
     const h = state.root;
-    if (!h || !h.queryPermission) return false; // 兼容模式句柄不支持写
+    if (!h || !h.queryPermission) return false; // 无法获取读写授权
     try {
       let p = await h.queryPermission({ mode: 'readwrite' });
       if (p !== 'granted') p = await h.requestPermission({ mode: 'readwrite' });
@@ -553,7 +549,7 @@
   /* 重命名：move 优先，不支持时降级为「复制到新目录 + 删除旧目录」 */
   async function doRenameAlbum(oldName, newName) {
     const album = state.albums.find(a => a.name === oldName);
-    if (!album || !album.handle) { toast('无法重命名（当前为兼容模式）'); return false; }
+    if (!album || !album.handle) { toast('默认相册不支持重命名'); return false; }
     try {
       if (typeof album.handle.move === 'function') {
         await album.handle.move(newName);
@@ -589,11 +585,11 @@
   /* 删除（真实删除磁盘文件夹及其内所有照片）
    * 用标准 removeEntry 实现，不依赖较新的 FileSystemHandle.remove() */
   async function deleteAlbum(album) {
-    if (!album.handle) { toast('无法删除（当前为兼容模式）'); return; }
+    if (!album.handle) { toast('默认相册不支持删除'); return; }
     if (!await canWrite()) { toast('需要「读写」权限才能删除相册'); return; }
     if (!fsCaps.removeEntry) { toast(fsTip); return; }
     const msg = `确定删除相册「${album.name}」吗？\n\n将删除磁盘上该文件夹内的 ${album.photos.length} 张照片，且无法恢复！`;
-    if (!confirm(msg)) return;
+    if (!await confirmInApp(msg, '删除相册', '删除')) return;
     try { await fsDeleteAlbum(album); }
     catch (e) { toast('删除失败：' + (e && e.message || e)); return; }
     await removeTrashAlbum(album.name);
@@ -793,13 +789,6 @@
     }
     pickDir();
   });
-  $('#btn-pick-fallback').addEventListener('click', () => $('#dir-input').click());
-  $('#dir-input').addEventListener('change', async e => {
-    const files = Array.from(e.target.files || []);
-    if (!files.length) return;
-    e.target.value = '';
-    await setRoot(pseudoRootFromFiles(files));
-  });
   /* 拖拽文件夹进页面 */
   window.addEventListener('dragover', e => { e.preventDefault(); });
   window.addEventListener('drop', async e => {
@@ -826,7 +815,7 @@
   $('#btn-trash').addEventListener('click', async () => { renderTrash(); switchView('trash'); });
   $('#btn-trash-clear').addEventListener('click', async () => {
     if (!(await trashAll()).length) { toast('最近删除已经是空的'); return; }
-    if (!confirm('确定清空最近删除吗？清空后无法恢复。')) return;
+    if (!await confirmInApp('确定清空最近删除吗？清空后无法恢复。', '清空最近删除', '清空')) return;
     await trashClear();
     trashIds.clear();
     renderTrash();
@@ -853,6 +842,11 @@
 
   /* 快捷键：Escape 关闭任意弹窗，Enter 提交相册名 */
   document.addEventListener('keydown', e => {
+    if (!$('#confirm-modal').classList.contains('hidden')) {
+      if (e.key === 'Escape') { e.preventDefault(); finishConfirm(false); }
+      else if (e.key === 'Enter') { e.preventDefault(); finishConfirm(true); }
+      return;
+    }
     const anyModal = ['#trash-modal', '#album-modal', '#action-sheet'].some(s => !$(s).classList.contains('hidden'));
     if (anyModal) {
       if (e.key === 'Escape') {
@@ -874,9 +868,14 @@
   $('#modal-close').addEventListener('click', closeTrashModal);
   $('#modal-restore').addEventListener('click', restoreModalItem);
   $('#modal-purge').addEventListener('click', async () => {
-    if (modalItem && confirm('彻底删除「' + modalItem.name + '」？此操作无法撤销。')) await purgeModalItem();
+    if (modalItem && await confirmInApp('彻底删除「' + modalItem.name + '」？此操作无法撤销。', '彻底删除照片', '彻底删除')) await purgeModalItem();
   });
   $('#trash-modal').addEventListener('click', e => { if (e.target === e.currentTarget) closeTrashModal(); });
+
+  /* 站内确认弹窗 */
+  $('#confirm-ok').addEventListener('click', () => finishConfirm(true));
+  $('#confirm-cancel').addEventListener('click', () => finishConfirm(false));
+  $('#confirm-modal').addEventListener('click', e => { if (e.target === e.currentTarget) finishConfirm(false); });
 
   /* 相册管理弹窗 */
   $('#album-modal-cancel').addEventListener('click', closeAlbumModal);
@@ -903,7 +902,7 @@
   (async function init() {
     if (!window.showDirectoryPicker) {
       $('#btn-pick').classList.add('hidden');
-      $('#btn-pick-fallback').textContent = '📂 选择相册文件夹';
+      $('.landing-note').textContent = '当前浏览器不支持目录选择，请使用 Chrome 或 Edge；也可以尝试将「相册」文件夹拖拽到本页面。';
     }
     try {
       await purgeTrash();

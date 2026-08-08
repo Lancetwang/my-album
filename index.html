@@ -22,11 +22,9 @@
     </ol>
     <div class="landing-actions">
       <button id="btn-pick" class="btn-primary">📁 选择相册文件夹</button>
-      <button id="btn-pick-fallback" class="btn-secondary">📂 选择相册文件夹（兼容模式）</button>
     </div>
     <p class="landing-note">提示：受浏览器安全限制，纯静态页面无法自动扫描同级文件夹，首次打开需选择一次；之后浏览器会记住授权，多数情况可直接进入。推荐使用 Chrome 或 Edge。</p>
   </div>
-  <input type="file" id="dir-input" webkitdirectory multiple hidden>
 </section>
 
 <!-- ============ 相册列表 ============ -->
@@ -157,6 +155,19 @@
     <div class="modal-actions">
       <button id="album-modal-ok" class="btn-primary">确定</button>
       <button id="album-modal-cancel" class="btn-plain">取消</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 确认弹窗 ============ -->
+<div id="confirm-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-message">
+  <div class="modal-card confirm-card">
+    <div class="confirm-eyebrow">请确认</div>
+    <h2 class="confirm-title" id="confirm-title"></h2>
+    <div class="confirm-message" id="confirm-message"></div>
+    <div class="modal-actions confirm-actions">
+      <button id="confirm-cancel" class="btn-plain">取消</button>
+      <button id="confirm-ok" class="btn-danger">确定</button>
     </div>
   </div>
 </div>

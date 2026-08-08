@@ -37,6 +37,7 @@
       <h1>相册</h1>
       <div class="sub" id="albums-sub"></div>
     </div>
+    <button id="btn-create" class="icon-btn" title="新建相册">＋</button>
     <button id="btn-repick" class="icon-btn" title="更换相册文件夹">📁</button>
     <button id="btn-trash" class="icon-btn" title="最近删除">🗑</button>
   </header>
@@ -97,6 +98,29 @@
       <button id="modal-restore" class="btn-primary">↩︎ 恢复</button>
       <button id="modal-purge" class="btn-danger">彻底删除</button>
       <button id="modal-close" class="btn-plain">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 相册操作菜单（重命名/删除） ============ -->
+<div id="action-sheet" class="modal hidden">
+  <div class="sheet-card">
+    <div class="sheet-title" id="sheet-title"></div>
+    <button id="sheet-rename" class="sheet-btn">✏️ 重命名</button>
+    <button id="sheet-delete" class="sheet-btn danger">🗑 删除相册</button>
+    <button id="sheet-cancel" class="sheet-btn plain">取消</button>
+  </div>
+</div>
+
+<!-- ============ 新建/重命名相册 ============ -->
+<div id="album-modal" class="modal hidden">
+  <div class="modal-card">
+    <div class="modal-name" id="album-modal-title">新建相册</div>
+    <input id="album-modal-input" class="text-input" placeholder="相册名称" maxlength="60" autocomplete="off">
+    <div class="modal-meta" id="album-modal-err"></div>
+    <div class="modal-actions">
+      <button id="album-modal-ok" class="btn-primary">确定</button>
+      <button id="album-modal-cancel" class="btn-plain">取消</button>
     </div>
   </div>
 </div>

@@ -32,6 +32,9 @@
     urls: new Set(),     // 待释放的 objectURL
   };
   let trashIds = new Set(); // 已删除照片 id 集合
+  let albumModalMode = 'create'; // create | rename
+  let albumModalTarget = null;
+  let sheetTarget = null;
 
   /* ---------- IndexedDB（失败时降级为内存，保证兼容模式可用） ---------- */
   let idbOk = true, _db = null;
@@ -116,7 +119,7 @@
             try { const file = await fh.getFile(); photos.push({ name: fn, lastModified: file.lastModified, file }); } catch (e) { /* 跳过无法读取的文件 */ }
           }
         }
-        albums.push({ name, photos });
+        albums.push({ name, photos, handle });
       } else if (handle.kind === 'file' && isImage(name)) {
         try { const file = await handle.getFile(); rootPhotos.push({ name, lastModified: file.lastModified, file }); } catch (e) { }
       }
@@ -229,10 +232,19 @@
 
   async function pickDir() {
     try {
-      const h = await window.showDirectoryPicker({ mode: 'read', id: 'album-root' });
+      // 优先申请读写权限（相册增删改查需要）
+      const h = await window.showDirectoryPicker({ mode: 'readwrite', id: 'album-root' });
       await setRoot(h);
     } catch (e) {
-      if (e && e.name !== 'AbortError') toast('打开文件夹失败：' + e.message);
+      if (e && e.name !== 'AbortError') {
+        try {
+          const h = await window.showDirectoryPicker({ mode: 'read', id: 'album-root' });
+          await setRoot(h);
+          toast('已使用只读模式：可以浏览，但无法新建/重命名/删除相册');
+        } catch (e2) {
+          if (e2 && e2.name !== 'AbortError') toast('打开文件夹失败：' + e2.message);
+        }
+      }
     }
   }
 
@@ -273,6 +285,12 @@
       cnt.className = 'album-count';
       cnt.textContent = `${a.photos.length} 张`;
       card.append(cover, name, cnt);
+      const more = document.createElement('button');
+      more.className = 'album-more';
+      more.textContent = '⋯';
+      more.title = '更多操作';
+      more.addEventListener('click', e => { e.stopPropagation(); openAlbumActions(a); });
+      card.appendChild(more);
       card.addEventListener('click', () => openAlbum(a));
       grid.appendChild(card);
     });
@@ -305,20 +323,31 @@
     updateSegmented();
     const grid = $('#photo-grid');
     grid.innerHTML = '';
-    photos.forEach((p, i) => {
-      const t = document.createElement('button');
-      t.className = 'photo-tile';
-      t.type = 'button';
-      t.title = `${p.name}\n${fmtDate(p.lastModified)}`;
-      const img = document.createElement('img');
-      img.loading = 'lazy'; img.decoding = 'async';
-      img.src = urlOf(p.file);
-      img.alt = p.name;
-      t.appendChild(img);
-      t.addEventListener('click', () => openViewer(photos, i));
-      grid.appendChild(t);
-    });
-    if (!photos.length) {
+    if (photos.length) {
+      // 时间线：按天分组，每组前插入灰色日期标签
+      const groups = groupPhotos(photos);
+      let idx = 0;
+      groups.forEach(g => {
+        const label = document.createElement('div');
+        label.className = 'timeline-label';
+        label.textContent = fmtDayLabel(g.ts);
+        grid.appendChild(label);
+        g.photos.forEach(p => {
+          const t = document.createElement('button');
+          t.className = 'photo-tile';
+          t.type = 'button';
+          t.title = `${p.name}\n${fmtDate(p.lastModified)}`;
+          const img = document.createElement('img');
+          img.loading = 'lazy'; img.decoding = 'async';
+          img.src = urlOf(p.file);
+          img.alt = p.name;
+          t.appendChild(img);
+          t.addEventListener('click', () => openViewer(photos, idx));
+          grid.appendChild(t);
+          idx++;
+        });
+      });
+    } else {
       grid.innerHTML = `<div class="empty">
         <div class="empty-icon">🖼️</div>
         <div class="empty-title">此相册暂无照片</div>
@@ -424,6 +453,143 @@
     z.scale = 2.5; z.tx = 0; z.ty = 0;
     applyZoom();
   });
+
+  /* ---------- 相册管理（增删改查，需读写权限） ---------- */
+  function validAlbumName(n) {
+    n = (n || '').trim();
+    if (!n) return '相册名不能为空';
+    if (n.length > 60) return '相册名太长（最多 60 个字符）';
+    if (/[\\/:*?"<>|]/.test(n)) return '不能包含 \\ / : * ? " < > | 字符';
+    if (/[. ]$/.test(n)) return '相册名不能以空格或点结尾';
+    return null;
+  }
+  async function canWrite() {
+    const h = state.root;
+    if (!h || !h.queryPermission) return false; // 兼容模式句柄不支持写
+    try {
+      let p = await h.queryPermission({ mode: 'readwrite' });
+      if (p !== 'granted') p = await h.requestPermission({ mode: 'readwrite' });
+      return p === 'granted';
+    } catch (e) { return false; }
+  }
+  async function rescan() {
+    showLoading('正在刷新…');
+    try {
+      state.albums = await scan(state.root);
+      renderAlbums();
+      if (state.view === 'photos' && state.album) {
+        state.album = state.albums.find(a => a.name === state.album.name) || null;
+        if (state.album) renderPhotos();
+        else { renderAlbums(); switchView('albums'); }
+      }
+    } finally { hideLoading(); }
+  }
+  /* 创建 */
+  async function doCreateAlbum(name) {
+    try { await state.root.createDirectory(name); }
+    catch (e) { toast('创建失败：' + e.message); return false; }
+    await rescan();
+    const a = state.albums.find(x => x.name === name);
+    if (a) openAlbum(a);
+    toast('已创建相册「' + name + '」');
+    return true;
+  }
+  /* 重命名 */
+  async function doRenameAlbum(oldName, newName) {
+    const album = state.albums.find(a => a.name === oldName);
+    if (!album || !album.handle) { toast('无法重命名（当前为兼容模式）'); return false; }
+    try { await album.handle.move(newName); }
+    catch (e) { toast('重命名失败：' + e.message); return false; }
+    await renameTrashAlbum(oldName, newName); // 同步最近删除中的相册名
+    await rescan();
+    toast('已重命名为「' + newName + '」');
+    return true;
+  }
+  /* 删除（真实删除磁盘文件夹及其内所有照片） */
+  async function deleteAlbum(album) {
+    if (!album.handle) { toast('无法删除（当前为兼容模式）'); return; }
+    if (!await canWrite()) { toast('需要「读写」权限才能删除相册'); return; }
+    const msg = `确定删除相册「${album.name}」吗？\n\n将删除磁盘上该文件夹内的 ${album.photos.length} 张照片，且无法恢复！`;
+    if (!confirm(msg)) return;
+    try { await removeDir(album.handle); }
+    catch (e) { toast('删除失败：' + e.message); return; }
+    await removeTrashAlbum(album.name);
+    toast('已删除相册「' + album.name + '」');
+    if (state.album && state.album.name === album.name) {
+      state.album = null;
+      switchView('albums');
+    }
+    await rescan();
+  }
+  async function removeDir(h) {
+    for await (const [, child] of h.entries()) {
+      if (child.kind === 'directory') await removeDir(child);
+      else await child.remove();
+    }
+    await h.remove();
+  }
+  async function renameTrashAlbum(oldName, newName) {
+    for (const t of await trashAll()) {
+      if (t.album === oldName) { t.album = newName; await trashAdd(t); }
+    }
+  }
+  async function removeTrashAlbum(name) {
+    for (const t of await trashAll()) {
+      if (t.album === name) await trashRemove(t.id);
+    }
+    const prefix = name + '\u0000';
+    trashIds = new Set(Array.from(trashIds).filter(id => !id.startsWith(prefix)));
+  }
+  /* 弹窗 */
+  function openAlbumModal(mode, album) {
+    albumModalMode = mode;
+    albumModalTarget = album || null;
+    $('#album-modal-title').textContent = mode === 'create' ? '新建相册' : '重命名相册';
+    $('#album-modal-input').value = mode === 'create' ? '' : album.name;
+    $('#album-modal-err').textContent = '';
+    $('#album-modal').classList.remove('hidden');
+    const input = $('#album-modal-input');
+    input.focus();
+    input.select();
+  }
+  function closeAlbumModal() { $('#album-modal').classList.add('hidden'); }
+  function openAlbumActions(album) {
+    sheetTarget = album;
+    $('#sheet-title').textContent = album.name;
+    $('#action-sheet').classList.remove('hidden');
+  }
+  function closeActionSheet() { $('#action-sheet').classList.add('hidden'); sheetTarget = null; }
+  async function submitAlbumModal() {
+    const name = $('#album-modal-input').value.trim();
+    if (albumModalMode === 'rename' && albumModalTarget && name === albumModalTarget.name) {
+      closeAlbumModal();
+      return;
+    }
+    const err = validAlbumName(name);
+    if (err) { $('#album-modal-err').textContent = err; return; }
+    if (state.albums.some(a => a.name === name)) { $('#album-modal-err').textContent = '已存在同名相册'; return; }
+    closeAlbumModal();
+    if (albumModalMode === 'create') await doCreateAlbum(name);
+    else if (albumModalTarget) await doRenameAlbum(albumModalTarget.name, name);
+  }
+
+  /* ---------- 时间线分组（按天） ---------- */
+  function groupPhotos(photos) {
+    const groups = [];
+    let cur = null, curDay = null;
+    for (const p of photos) {
+      const d = new Date(p.lastModified);
+      const day = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+      if (day !== curDay) { cur = { day, ts: d.getTime(), photos: [] }; groups.push(cur); curDay = day; }
+      cur.photos.push(p);
+    }
+    return groups;
+  }
+  function fmtDayLabel(ts) {
+    const d = new Date(ts);
+    const wd = ['日', '一', '二', '三', '四', '五', '六'][d.getDay()];
+    return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 星期${wd}`;
+  }
 
   /* ---------- 最近删除 ---------- */
   async function refreshTrashIds() {
@@ -562,6 +728,10 @@
   });
 
   /* 顶栏 */
+  $('#btn-create').addEventListener('click', async () => {
+    if (!await canWrite()) { toast('需要「读写」权限才能新建相册'); return; }
+    openAlbumModal('create');
+  });
   $('#btn-repick').addEventListener('click', pickDir);
   $('#btn-trash').addEventListener('click', async () => { renderTrash(); switchView('trash'); });
   $('#btn-trash-clear').addEventListener('click', async () => {
@@ -590,10 +760,17 @@
   $('#viewer-prev').addEventListener('click', () => navViewer(-1));
   $('#viewer-next').addEventListener('click', () => navViewer(1));
   $('#viewer-delete').addEventListener('click', deleteCurrent);
+
+  /* 快捷键：Escape 关闭任意弹窗，Enter 提交相册名 */
   document.addEventListener('keydown', e => {
-    const modalOpen = !$('#trash-modal').classList.contains('hidden');
-    if (modalOpen) {
-      if (e.key === 'Escape') closeTrashModal();
+    const anyModal = ['#trash-modal', '#album-modal', '#action-sheet'].some(s => !$(s).classList.contains('hidden'));
+    if (anyModal) {
+      if (e.key === 'Escape') {
+        closeTrashModal(); closeAlbumModal(); closeActionSheet();
+      } else if (e.key === 'Enter' && !$('#album-modal').classList.contains('hidden')) {
+        e.preventDefault();
+        submitAlbumModal();
+      }
       return;
     }
     if ($('#viewer').classList.contains('hidden')) return;
@@ -610,6 +787,24 @@
     if (modalItem && confirm('彻底删除「' + modalItem.name + '」？此操作无法撤销。')) await purgeModalItem();
   });
   $('#trash-modal').addEventListener('click', e => { if (e.target === e.currentTarget) closeTrashModal(); });
+
+  /* 相册管理弹窗 */
+  $('#album-modal-cancel').addEventListener('click', closeAlbumModal);
+  $('#album-modal-ok').addEventListener('click', submitAlbumModal);
+  $('#album-modal-input').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); submitAlbumModal(); } });
+  $('#album-modal').addEventListener('click', e => { if (e.target === e.currentTarget) closeAlbumModal(); });
+  $('#sheet-cancel').addEventListener('click', closeActionSheet);
+  $('#action-sheet').addEventListener('click', e => { if (e.target === e.currentTarget) closeActionSheet(); });
+  $('#sheet-rename').addEventListener('click', async () => {
+    closeActionSheet();
+    if (!sheetTarget) return;
+    if (!await canWrite()) { toast('需要「读写」权限才能重命名相册'); return; }
+    openAlbumModal('rename', sheetTarget);
+  });
+  $('#sheet-delete').addEventListener('click', () => {
+    closeActionSheet();
+    if (sheetTarget) deleteAlbum(sheetTarget);
+  });
 
   /* ---------- 启动 ---------- */
   (async function init() {

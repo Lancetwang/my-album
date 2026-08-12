@@ -193,6 +193,24 @@
     if (state.viewerUrl) { URL.revokeObjectURL(state.viewerUrl); state.viewerUrl = null; }
     clearViewerMedia();
   }
+  /* 查看器相邻媒体预载：让 ← → 切换接近零延迟 */
+  const viewerPreload = new Map(); // File -> objectURL
+  function clearViewerPreload() {
+    viewerPreload.forEach(u => URL.revokeObjectURL(u));
+    viewerPreload.clear();
+  }
+  function preloadViewerNeighbors() {
+    clearViewerPreload();
+    [state.viewerIndex - 1, state.viewerIndex + 1].forEach(j => {
+      const q = state.viewerPhotos[j];
+      if (!q || j === state.viewerIndex) return;
+      if ((q.kind || mediaKind(q.file)) !== 'image') return; // 视频不预载
+      const u = URL.createObjectURL(q.file);
+      viewerPreload.set(q.file, u);
+      const im = new Image();
+      im.src = u;
+    });
+  }
   function releaseModalUrl() {
     if (modalUrl) { URL.revokeObjectURL(modalUrl); modalUrl = null; }
     const img = $('#modal-img');
@@ -325,12 +343,29 @@
 
   /* ---------- Toast / Loading ---------- */
   let toastTimer = null;
-  function toast(msg) {
+  function toast(msg, opts = {}) {
     const t = $('#toast');
-    t.textContent = msg;
+    t.textContent = '';
+    const span = document.createElement('span');
+    span.textContent = msg;
+    t.appendChild(span);
+    if (opts.action) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'toast-action';
+      btn.textContent = opts.action;
+      btn.addEventListener('click', () => {
+        t.classList.remove('show');
+        if (opts.onAction) opts.onAction();
+      });
+      t.appendChild(btn);
+      t.classList.add('has-action');
+    } else {
+      t.classList.remove('has-action');
+    }
     t.classList.add('show');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+    toastTimer = setTimeout(() => t.classList.remove('show'), opts.duration || (opts.action ? 5200 : 2200));
   }
   function showLoading(msg) { $('#loading-msg').textContent = msg || '正在扫描相册…'; $('#loading').classList.remove('hidden'); }
   function hideLoading() { $('#loading').classList.add('hidden'); }
@@ -375,7 +410,7 @@
     showLoading('正在扫描相册…');
     try {
       state.albums = await scan(h);
-      renderAlbums();
+      renderAlbums({ animate: true });
       switchView('albums');
       toast('已载入 ' + state.albums.length + ' 个相册');
     } catch (e) {
@@ -434,7 +469,8 @@
     badge.setAttribute('aria-hidden', 'true');
     container.appendChild(badge);
   }
-  function renderAlbums() {
+  function renderAlbums(opts = {}) {
+    const { animate = false, highlight = null } = opts;
     renderToken++;
     releaseUrls();
     const visibleCount = a => a.photos.filter(p => !trashIds.has(trashId(a.name, p.name))).length;
@@ -442,11 +478,13 @@
     $('#albums-sub').textContent = `${state.albums.length} 个相册 · ${countLabel(total)}`;
     const grid = $('#album-grid');
     grid.innerHTML = '';
+    grid.classList.toggle('anim', animate);
     state.albums.forEach(a => {
       // 封面与计数同样过滤最近删除中的照片
       const photos = a.photos.filter(p => !trashIds.has(trashId(a.name, p.name)));
       const card = document.createElement('div');
       card.className = 'album-card';
+      card.dataset.name = a.name;
       const cover = document.createElement('div');
       cover.className = 'album-cover';
       const cells = photos.slice(-4).reverse(); // 最新 4 张（已过滤回收站）
@@ -485,6 +523,14 @@
       card.addEventListener('click', () => openAlbum(a));
       grid.appendChild(card);
     });
+    if (highlight) {
+      const el = grid.querySelector(`[data-name="${CSS.escape(highlight)}"]`);
+      if (el) {
+        el.classList.add('entering');
+        el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        setTimeout(() => el.classList.remove('entering'), 1500);
+      }
+    }
     if (!state.albums.length) {
       grid.innerHTML = `<div class="empty">
         <div class="empty-icon">🖼️</div>
@@ -582,6 +628,7 @@
     $('#viewer').classList.add('hidden');
     document.body.classList.remove('no-scroll');
     releaseViewerUrl();
+    clearViewerPreload();
     resetZoom();
   }
   function viewerMedia() {
@@ -590,8 +637,11 @@
   function showViewerImage() {
     const p = state.viewerPhotos[state.viewerIndex];
     if (!p) { closeViewer(); return; }
+    // 相邻预载命中则直接复用其 URL，切换无感
+    const preloaded = viewerPreload.get(p.file) || null;
+    if (preloaded) viewerPreload.delete(p.file);
     releaseViewerUrl();
-    state.viewerUrl = URL.createObjectURL(p.file);
+    state.viewerUrl = preloaded || URL.createObjectURL(p.file);
     const kind = p.kind || mediaKind(p.file);
     const img = $('#viewer-img');
     const video = $('#viewer-video');
@@ -625,6 +675,7 @@
     $('#viewer-count').textContent = `${state.viewerIndex + 1} / ${state.viewerPhotos.length}`;
     $('#viewer-name').textContent = p.name;
     resetZoom();
+    preloadViewerNeighbors();
   }
   function navViewer(d) {
     if (!state.viewerPhotos.length) return;
@@ -736,7 +787,7 @@
     showLoading('正在刷新…');
     try {
       state.albums = await scan(state.root);
-      renderAlbums();
+      renderAlbums({ animate: true });
       if (state.view === 'photos' && state.album) {
         state.album = state.albums.find(a => a.name === state.album.name) || null;
         if (state.album) renderPhotos();
@@ -744,26 +795,38 @@
       }
     } finally { hideLoading(); }
   }
-  /* 创建 */
+  function sortAlbums() {
+    state.albums.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'));
+  }
+  /* 删除相册卡片时的离场动画，结束后就地刷新列表 */
+  function animateCardOut(name) {
+    const el = $('#album-grid').querySelector(`[data-name="${CSS.escape(name)}"]`);
+    if (el) {
+      el.classList.add('leaving');
+      setTimeout(() => renderAlbums(), 190);
+    } else {
+      renderAlbums();
+    }
+  }
+  /* 创建（就地更新，不再全量重扫） */
   async function doCreateAlbum(name) {
     if (!fsCaps.createDir) { toast(fsTip); return false; }
+    let handle = null;
     try {
-      if (typeof state.root.createDirectory === 'function') {
-        await state.root.createDirectory(name);
-      } else {
-        await state.root.getDirectoryHandle(name, { create: true });
-      }
+      handle = typeof state.root.createDirectory === 'function'
+        ? await state.root.createDirectory(name)
+        : await state.root.getDirectoryHandle(name, { create: true });
     } catch (e) {
       toast('创建失败：' + (e && e.message || e));
       return false;
     }
-    await rescan();
-    const a = state.albums.find(x => x.name === name);
-    if (a) openAlbum(a);
+    state.albums.push({ name, photos: [], handle });
+    sortAlbums();
+    renderAlbums({ highlight: name });
     toast('已创建相册「' + name + '」');
     return true;
   }
-  /* 重命名：move 优先，不支持时降级为「复制到新目录 + 删除旧目录」 */
+  /* 重命名（就地更新，不重扫）：move 优先，不支持时降级为「复制到新目录 + 删除旧目录」 */
   async function doRenameAlbum(oldName, newName) {
     const album = state.albums.find(a => a.name === oldName);
     if (!album || !album.handle) { toast('默认相册不支持重命名'); return false; }
@@ -771,24 +834,29 @@
       if (typeof album.handle.move === 'function') {
         await album.handle.move(newName);
       } else {
-        await fsCopyRename(album, newName);
+        const r = await fsCopyRename(album, newName);
+        album.handle = r.handle;
+        album.photos = r.photos;
       }
     } catch (e) {
       toast('重命名失败：' + (e && e.message || e));
       return false;
     }
+    album.name = newName;
+    sortAlbums();
+    renderAlbums({ highlight: newName });
     await renameTrashAlbum(oldName, newName); // 同步最近删除中的相册名
-    await rescan();
     toast('已重命名为「' + newName + '」');
     return true;
   }
-  /* 降级重命名：新建目标目录 → 逐张复制照片 → 删除旧目录 */
+  /* 降级重命名：新建目标目录 → 逐张复制媒体 → 删除旧目录；返回新句柄与媒体列表 */
   async function fsCopyRename(album, newName) {
     if (!fsCaps.writeFile || !fsCaps.removeEntry) throw new Error(fsTip);
     const dir = album.handle;
     const newDir = typeof state.root.createDirectory === 'function'
       ? await state.root.createDirectory(newName)
       : await state.root.getDirectoryHandle(newName, { create: true });
+    const photos = [];
     for await (const [n, child] of dir.entries()) {
       if (child.kind !== 'file') continue; // 深层子目录不复制（本项目约定最多两层）
       const f = await child.getFile();
@@ -796,26 +864,33 @@
       const w = await dest.createWritable();
       await w.write(f);
       await w.close();
+      if (isMedia(n)) {
+        try {
+          const nf = await (await newDir.getFileHandle(n)).getFile();
+          photos.push({ name: n, kind: mediaKind(n), lastModified: nf.lastModified, file: nf });
+        } catch (e) { }
+      }
     }
+    photos.sort((x, y) => x.lastModified - y.lastModified);
     await fsDeleteAlbum(album);
+    return { handle: newDir, photos };
   }
   /* 删除（真实删除磁盘文件夹及其内所有照片）
    * 用标准 removeEntry 实现，不依赖较新的 FileSystemHandle.remove() */
   async function deleteAlbum(album) {
     if (!album.handle) { toast('默认相册不支持删除'); return; }
-    if (!await ensureWriteAccess('删除相册')) { toast('需要「读写」权限才能删除相册'); return; }
     if (!fsCaps.removeEntry) { toast(fsTip); return; }
-    const msg = `确定删除相册「${album.name}」吗？\n\n将删除磁盘上该文件夹内的 ${countLabel(album.photos.length)}，且无法恢复！`;
+    const visibleCount = album.photos.filter(p => !trashIds.has(trashId(album.name, p.name))).length;
+    const msg = `确定删除相册「${album.name}」吗？\n\n将删除磁盘上该文件夹内的 ${countLabel(visibleCount)}，且无法恢复！`;
     if (!await confirmInApp(msg, '删除相册', '删除')) return;
+    if (!await ensureWriteAccess('删除相册')) { toast('需要「读写」权限才能删除相册'); return; }
     try { await fsDeleteAlbum(album); }
     catch (e) { toast('删除失败：' + (e && e.message || e)); return; }
     await removeTrashAlbum(album.name);
+    state.albums = state.albums.filter(x => x !== album);
+    if (state.album === album) state.album = null;
+    animateCardOut(album.name); // 就地移除 + 离场动画，不再全量重扫
     toast('已删除相册「' + album.name + '」');
-    if (state.album && state.album.name === album.name) {
-      state.album = null;
-      switchView('albums');
-    }
-    await rescan();
   }
   /* 递归清空目录并用 removeEntry 删除相册目录本身 */
   async function fsDeleteAlbum(album) {
@@ -856,6 +931,7 @@
   }
   function closeAlbumModal() { $('#album-modal').classList.add('hidden'); }
   function openAlbumActions(album) {
+    if (!album.handle) { toast('「默认相册」由根目录媒体自动生成，请通过文件夹管理'); return; }
     sheetTarget = album;
     $('#sheet-title').textContent = album.name;
     $('#action-sheet').classList.remove('hidden');
@@ -903,18 +979,35 @@
       if (t.deletedAt < cutoff) await trashRemove(t.id);
     }
   }
+  /* 移入最近删除（查看器与网格共用），返回回收站条目 */
+  const pendingTrash = new Set();
+  async function moveToTrash(p) {
+    const id = trashId(state.album.name, p.name);
+    if (trashIds.has(id) || pendingTrash.has(id)) return null;
+    pendingTrash.add(id);
+    try {
+      const thumb = await makeThumb(p.file);
+      const item = { id, album: state.album.name, name: p.name, kind: p.kind || mediaKind(p.file), deletedAt: Date.now(), lastModified: p.lastModified, thumb };
+      await trashAdd(item);
+      trashIds.add(id);
+      return item;
+    } finally { pendingTrash.delete(id); }
+  }
+  async function undoMoveToTrash(item) {
+    await trashRemove(item.id);
+    trashIds.delete(item.id);
+    if (state.view === 'photos' && state.album) renderPhotos();
+    toast('已撤销删除');
+  }
+  function toastMovedToTrash(item) {
+    toast('已移到「最近删除」', { action: '撤销', onAction: () => { undoMoveToTrash(item); } });
+  }
   async function deleteCurrent() {
     const p = state.viewerPhotos[state.viewerIndex];
     if (!p) return;
-    const id = trashId(state.album.name, p.name);
-    if (trashIds.has(id)) return;
-    showLoading('正在处理…');
-    try {
-      const thumb = await makeThumb(p.file);
-      await trashAdd({ id, album: state.album.name, name: p.name, kind: p.kind || mediaKind(p.file), deletedAt: Date.now(), lastModified: p.lastModified, thumb });
-      trashIds.add(id);
-    } finally { hideLoading(); }
-    toast('已移到「最近删除」，30 天后自动清除');
+    const item = await moveToTrash(p);
+    if (!item) return;
+    toastMovedToTrash(item);
     state.viewerPhotos.splice(state.viewerIndex, 1);
     if (state.viewerPhotos.length) {
       if (state.viewerIndex >= state.viewerPhotos.length) state.viewerIndex = state.viewerPhotos.length - 1;
@@ -1044,6 +1137,7 @@
     if (!await ensureWriteAccess('新建相册')) { toast('需要「读写」权限才能新建相册'); return; }
     openAlbumModal('create');
   });
+  $('#btn-refresh').addEventListener('click', () => rescan());
   $('#btn-repick').addEventListener('click', pickDir);
   $('#btn-trash').addEventListener('click', async () => { renderTrash(); switchView('trash'); });
   $('#btn-trash-clear').addEventListener('click', async () => {

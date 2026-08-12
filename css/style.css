@@ -109,8 +109,9 @@ button:focus-visible, input:focus-visible {
   position: relative;
   background: transparent; padding: 0;
   cursor: pointer; transition: transform .4s cubic-bezier(.22, 1, .36, 1);
-  animation: fadeUp .65s cubic-bezier(.22, 1, .36, 1) both;
 }
+/* 进场动画只在首次载入/手动刷新时播放，避免每次重渲染都闪一遍 */
+.album-grid.anim .album-card { animation: fadeUp .65s cubic-bezier(.22, 1, .36, 1) both; }
 .album-card:hover { transform: translateY(-5px); }
 .album-card:active { transform: translateY(-1px) scale(.99); }
 .album-cover {
@@ -145,6 +146,10 @@ button:focus-visible, input:focus-visible {
 .album-card:hover .album-more, .album-more:hover { opacity: 1; }
 .album-more:hover { background: var(--card); }
 .album-more:active { transform: scale(.92); }
+/* 触屏设备没有 hover，⋯ 按钮常显 */
+@media (hover: none) {
+  .album-more { opacity: .92; }
+}
 
 /* ============ 照片网格 ============ */
 .photo-grid {
@@ -412,6 +417,7 @@ button:focus-visible, input:focus-visible {
 #toast {
   position: fixed; left: 50%; bottom: 42px; z-index: 300;
   transform: translate(-50%, 16px);
+  display: flex; align-items: center; gap: 12px;
   background: rgb(28 26 19 / 95%); color: #f5f2e9;
   font-size: 13.5px; padding: 11px 22px; border-radius: var(--pill);
   opacity: 0; pointer-events: none;
@@ -420,17 +426,30 @@ button:focus-visible, input:focus-visible {
   box-shadow: var(--sh-lg);
 }
 #toast.show { opacity: 1; transform: translate(-50%, 0); }
+#toast.has-action { pointer-events: auto; }
+.toast-action {
+  flex: none; color: #a8cfbc; font-size: 13px; font-weight: 700; letter-spacing: .03em;
+  padding: 3px 10px; margin: -3px -8px -3px 0; border-radius: var(--pill);
+  transition: background .18s ease, color .18s ease;
+}
+.toast-action:hover { background: rgb(168 207 188 / 16%); }
 
 /* ============ 动画 ============ */
 @keyframes fadeUp { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-.album-card:nth-child(2) { animation-delay: .04s; }
-.album-card:nth-child(3) { animation-delay: .08s; }
-.album-card:nth-child(4) { animation-delay: .12s; }
-.album-card:nth-child(5) { animation-delay: .16s; }
-.album-card:nth-child(6) { animation-delay: .2s; }
+.album-grid.anim .album-card:nth-child(2) { animation-delay: .04s; }
+.album-grid.anim .album-card:nth-child(3) { animation-delay: .08s; }
+.album-grid.anim .album-card:nth-child(4) { animation-delay: .12s; }
+.album-grid.anim .album-card:nth-child(5) { animation-delay: .16s; }
+.album-grid.anim .album-card:nth-child(6) { animation-delay: .2s; }
+
+/* 删除相册时的离场动画 */
+.album-card.leaving { animation: cardOut .19s ease forwards; pointer-events: none; }
+@keyframes cardOut { to { opacity: 0; transform: translateY(10px) scale(.94); } }
+/* 新建/重命名后的高亮提示 */
+.album-card.entering .album-cover { box-shadow: 0 0 0 3px var(--accent), var(--sh-md); }
 
 @media (max-width: 760px) {
   .viewer { --viewer-panel: 320px; }
